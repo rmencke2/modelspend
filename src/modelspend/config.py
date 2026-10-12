@@ -2,6 +2,7 @@
 written to SQLite, logs, repr() output or error messages."""
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,52 @@ def parse_env_file(path: str | Path) -> dict[str, str]:
     return out
 
 
+KEYS_FILE = "keys.env"  # managed by `modelspend keys set`; KEY=VALUE, chmod 600, never logged or stored in SQLite
+SETTINGS_FILE = "settings.json"  # managed by `modelspend providers|models enable|disable`
+
+
+def default_home(env: dict[str, str] | None = None) -> Path:
+    e = os.environ if env is None else env
+    return Path(e["MODELSPEND_HOME"]) if e.get("MODELSPEND_HOME") else Path.home() / ".modelspend"
+
+
+def keys_path(home: Path) -> Path:
+    return home / KEYS_FILE
+
+
+def read_keys_file(home: Path) -> dict[str, str]:
+    p = keys_path(home)
+    return parse_env_file(p) if p.exists() else {}
+
+
+def write_keys_file(home: Path, data: dict[str, str]) -> Path:
+    p = keys_path(home)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = "# ModelSpend API keys (plain text, readable only by you). Real environment variables override these.\n"
+    body += "".join(f"{k}={v}\n" for k, v in sorted(data.items()))
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # created 0600 so the key is never briefly world-readable
+    with os.fdopen(fd, "w") as f:
+        f.write(body)
+    os.chmod(p, 0o600)
+    return p
+
+
+def settings_path(home: Path) -> Path:
+    return home / SETTINGS_FILE
+
+
+def load_settings(home: Path) -> dict:
+    p = settings_path(home)
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def save_settings(home: Path, data: dict) -> Path:
+    p = settings_path(home)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, sort_keys=True))
+    return p
+
+
 def _bool(v: str | None, default: bool = False) -> bool:
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
@@ -38,6 +85,9 @@ class Config:
     db_path: Path | None = None
     api_keys: dict[str, str] = field(default_factory=dict, repr=False)
     default_providers: list[str] = field(default_factory=list)
+    key_sources: dict[str, str] = field(default_factory=dict)  # provider -> 'environment' | 'keys file' (never the key)
+    allow_models: list[str] = field(default_factory=list)  # default allowlist of 'provider/model' refs (empty = all)
+    deny_models: list[str] = field(default_factory=list)  # default denylist of 'provider/model' refs
     catalog_path: Path | None = None
     overrides_path: Path | None = None
     evidence_path: Path | None = None
@@ -69,17 +119,30 @@ class Config:
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Config":
         e = dict(os.environ if env is None else env)
-        keys = {}
+        home = default_home(e)
+        filekeys = read_keys_file(home)
+        settings = load_settings(home)
+        keys: dict[str, str] = {}
+        key_sources: dict[str, str] = {}
         for prov, names in KEY_ENV.items():
-            for n in names:
+            for n in names:  # real environment wins over the keys file
                 if e.get(n):
-                    keys[prov] = e[n]
+                    keys[prov], key_sources[prov] = e[n], "environment"
                     break
-        provs = [normalize_provider(p) for p in e.get("MODELSPEND_PROVIDERS", "").split(",") if p.strip()]
-        sens = [normalize_provider(p) for p in e.get("MODELSPEND_SENSITIVE_PROVIDERS", "").split(",") if p.strip()]
-        kw: dict = {}
-        if e.get("MODELSPEND_HOME"):
-            kw["home"] = Path(e["MODELSPEND_HOME"])
+            else:
+                for n in names:
+                    if filekeys.get(n):
+                        keys[prov], key_sources[prov] = filekeys[n], "keys file"
+                        break
+        if "MODELSPEND_PROVIDERS" in e:
+            provs = [normalize_provider(p) for p in e["MODELSPEND_PROVIDERS"].split(",") if p.strip()]
+        else:
+            provs = [normalize_provider(p) for p in settings.get("providers", [])]
+        if "MODELSPEND_SENSITIVE_PROVIDERS" in e:
+            sens = [normalize_provider(p) for p in e["MODELSPEND_SENSITIVE_PROVIDERS"].split(",") if p.strip()]
+        else:
+            sens = [normalize_provider(p) for p in settings.get("sensitive_providers", [])]
+        kw: dict = {"home": home}
         if e.get("MODELSPEND_DB"):
             kw["db_path"] = Path(e["MODELSPEND_DB"])
         if e.get("MODELSPEND_CATALOG"):
@@ -88,6 +151,9 @@ class Config:
             kw["overrides_path"] = Path(e["MODELSPEND_OVERRIDES"])
         return cls(
             api_keys=keys,
+            key_sources=key_sources,
+            allow_models=list(settings.get("allow_models", [])),
+            deny_models=list(settings.get("deny_models", [])),
             default_providers=provs,
             sensitive_providers=sens,
             max_pricing_age_days=int(e.get("MODELSPEND_MAX_PRICING_AGE_DAYS", 30)),

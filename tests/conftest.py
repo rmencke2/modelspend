@@ -13,6 +13,19 @@ from modelspend.store import Store
 
 TODAY = date(2026, 10, 12)
 
+_ISOLATED_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY", "MODELSPEND_PROVIDERS",
+                 "MODELSPEND_SENSITIVE_PROVIDERS", "MODELSPEND_ALLOW_UNPRICED", "MODELSPEND_API_TOKEN", "MODELSPEND_DB",
+                 "MODELSPEND_CATALOG", "MODELSPEND_OVERRIDES", "MODELSPEND_EXACT_TOKEN_COUNTS", "MODELSPEND_CLASSIFIER_MODEL"] + \
+                [f"MODELSPEND_PRICING_URL_{p}" for p in ("ANTHROPIC", "OPENAI", "GOOGLE", "XAI")]
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_env(tmp_path, monkeypatch):
+    """Tests never see the developer's real keys, settings, overrides or database."""
+    monkeypatch.setenv("MODELSPEND_HOME", str(tmp_path / "ms-home"))
+    for k in _ISOLATED_ENV:
+        monkeypatch.delenv(k, raising=False)
+
 
 @pytest.fixture
 def catalog():

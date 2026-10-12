@@ -8,6 +8,10 @@ Pricing multipliers ModelSpend does not model because it does not use those feat
 
 OpenAI, Google and xAI have **no entries**: their official pages could not be reached when this was built and have not been verified since. `synthetic_test_catalog.json` contains **fictional** models and prices for tests and mock evaluations (`--catalog synthetic`); never use it for real routing.
 
+## Pricing sources
+
+The official pricing page for each provider is configuration, not code: `src/modelspend/catalog/data/sources.json` ships the defaults, and a user can override them with `modelspend sources set <provider> <url>`, `~/.modelspend/sources.json`, or `MODELSPEND_PRICING_URL_<PROVIDER>`. Catalog prices that carry no `source_url` of their own cite the configured page, so when a provider moves its pricing page you change one link and every entry follows. `modelspend sources check` fetches each page and reports `unchanged`, `CHANGED`, `no_baseline`, `unreachable` or `http_error` against the content you last accepted with `--accept`; it never reads prices out of the page.
+
 ## What a key can and cannot tell you
 
 | | From the provider's list endpoint with your key |

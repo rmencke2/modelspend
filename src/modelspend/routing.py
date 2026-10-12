@@ -104,6 +104,8 @@ class Router:
         tok_budget = req.max_budget_tokens if tokens_remaining is None else tokens_remaining
         unpriced_ok = req.allow_unpriced or self.cfg.allow_unpriced
         sens_ok = set(self.cfg.sensitive_providers)
+        allow = req.allow_models or self.cfg.allow_models  # request-level list wins over the user's default
+        deny = set(req.deny_models) | set(self.cfg.deny_models)
 
         # ---- 2. hard constraints -------------------------------------------------------
         excluded: list[Exclusion] = []
@@ -117,10 +119,10 @@ class Router:
                 drop(m, "provider", "no API key configured for this provider")
             elif req.sensitive and m.provider not in sens_ok:
                 drop(m, "privacy", "request is marked sensitive and provider is not approved in MODELSPEND_SENSITIVE_PROVIDERS")
-            elif req.allow_models and m.ref not in req.allow_models:
+            elif allow and m.ref not in allow:
                 drop(m, "policy", "not in allow_models")
-            elif m.ref in req.deny_models:
-                drop(m, "policy", "in deny_models")
+            elif m.ref in deny:
+                drop(m, "policy", "disabled (deny_models: request or your settings)")
             elif m.availability not in ("available",) and not (m.availability == "preview" and self.cfg.allow_preview_models):
                 drop(m, "availability", f"availability is '{m.availability}'")
             elif (m.pricing is None or not m.pricing.known) and not unpriced_ok:

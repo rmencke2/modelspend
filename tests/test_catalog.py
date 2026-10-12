@@ -81,5 +81,5 @@ def test_catalog_validate_flags_errors():
     import tempfile, pathlib
     p = pathlib.Path(tempfile.mkdtemp()) / "c.json"
     p.write_text(json.dumps(bad))
-    msgs = [str(i) for i in Catalog.load(p).validate()]
+    msgs = [str(i) for i in Catalog.load(p, sources={}).validate()]  # no provider pricing URL configured
     assert any("verified_on" in m for m in msgs) and any("source_url" in m for m in msgs)

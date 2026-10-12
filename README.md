@@ -41,17 +41,36 @@ Compare premium vs cheapest-eligible vs ModelSpend on simulated data (mechanics 
 modelspend eval run --mode mock --out /tmp/modelspend-report.md
 ```
 
+### Setup: keys, providers, models, pricing links
+
+Everything below is a command; nothing needs hand-edited files.
+
+```bash
+modelspend keys set anthropic
+modelspend keys set openai
+modelspend keys test
+modelspend providers enable anthropic openai
+modelspend status
+```
+
+- **API keys.** `keys set <provider>` asks for the key with hidden input and saves it to `~/.modelspend/keys.env` (plain text, `chmod 600`, never stored in SQLite or logs). A real environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`) always overrides the saved key, so CI and Docker keep working. `keys list` shows what is set and where it comes from (never the key); `keys test` checks each key with a read-only model-list call; `keys remove <provider>` deletes one.
+- **Choosing vendors.** `providers enable/disable` sets the default allowlist used when a request doesn't name providers; a request (`providers=[...]`, `--providers`, the `modelspend` extension) always overrides it. Models from different vendors compete only when you enable more than one.
+- **Choosing models.** `models list` shows every model, whether it is routable and, if not, why (no key, unverified, no pricing, ...). `models disable anthropic/claude-opus-5-5` keeps it out of routing; `models enable` brings it back. The quality profile (`economy`, `balanced`, `high_assurance`) then decides how strong a model each task needs.
+- **Pricing links.** Each provider's official pricing page URL lives in one place (`sources.json`), not in the code. Change it with `modelspend sources set <provider> <url>` (tracking parameters such as `utm_source` are stripped), `MODELSPEND_PRICING_URL_<PROVIDER>`, or by editing `~/.modelspend/sources.json`; `sources reset <provider>` restores the shipped link. Catalog prices without their own `source_url` cite the configured page. `modelspend sources check` fetches each page and tells you if it **changed** since your last accepted baseline (it never edits prices: re-verify, update with `catalog set`, then `sources check --accept`).
+- **One-screen overview:** `modelspend status`.
+
 ### Using it for real (Anthropic example)
 
-1. **Set your key** (never paste it anywhere; consider a low spend limit in the provider console):
+1. **Save your key** (consider a low spend limit in the provider console), then confirm it works:
    ```bash
-   export ANTHROPIC_API_KEY=...
+   modelspend keys set anthropic
+   modelspend keys test anthropic
    ```
 2. **Confirm models and limits from your key's live Models API** (dry run first, then write). Prices are never touched; the shipped Anthropic prices come from the official pricing pages. `--assume` records capabilities *you* assert after reading the docs:
    ```bash
    modelspend catalog sync --provider anthropic
    modelspend catalog sync --provider anthropic --assume streaming,tools --write
-   modelspend catalog list
+   modelspend models list
    ```
 3. **Preview (no call, no spend), then route.** Output leads with token usage:
    ```bash
@@ -59,7 +78,7 @@ modelspend eval run --mode mock --out /tmp/modelspend-report.md
    modelspend route "Classify this ticket as billing, bug or other. Label only. Ticket: I was charged twice." --providers anthropic --max-output-tokens 16 --budget-tokens 2000
    modelspend usage
    ```
-4. **Other providers:** `modelspend catalog template openai/<model-id>` prints a skeleton to fill from the official docs; `modelspend catalog set <ref> tier=2 capabilities.streaming=true pricing.input_per_mtok=...` edits one model safely (reverted if invalid). Without a price a model only runs with `--allow-unpriced`, and its cost is reported as unknown while tokens stay exact.
+4. **Other providers:** `modelspend catalog template openai/<model-id>` prints a skeleton (pre-filled with that provider's pricing URL) to fill from the official docs; `modelspend catalog set <ref> tier=2 capabilities.streaming=true pricing.input_per_mtok=...` edits one model safely (reverted if invalid). Without a price a model only runs with `--allow-unpriced`, and its cost is reported as unknown while tokens stay exact.
 5. **Serve it** (localhost only unless `MODELSPEND_API_TOKEN` is set). It listens on http://127.0.0.1:8787 with the dashboard at `/dashboard`:
    ```bash
    modelspend serve

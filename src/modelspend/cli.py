@@ -13,18 +13,29 @@ import typer
 
 from . import POLICY_VERSION
 from .catalog import Catalog, shipped_catalog_path, write_evidence
-from .config import Config, parse_env_file
+from .config import (
+    KEY_ENV, Config, keys_path, load_settings, parse_env_file, read_keys_file, save_settings, settings_path, write_keys_file,
+)
 from .engine import Engine
 from .errors import ModelSpendError
 from .policy import BASE_TIER, PROFILES
 from .providers import build_adapters
+from .sources import Source, check_source, clean_url, load_snapshots, resolve_sources, set_user_source
 from .store import Store
 from .types import RouteRequest, TaskCategory
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ModelSpend: route each task to the lowest-cost suitable model.")
 catalog_app = typer.Typer(no_args_is_help=True, help="Inspect, validate and extend the model catalog.")
 eval_app = typer.Typer(no_args_is_help=True, help="Evaluation harness (mock by default; live is opt-in with a budget).")
+keys_app = typer.Typer(no_args_is_help=True, help="Set, list, test and remove API keys (stored only in ~/.modelspend/keys.env, chmod 600).")
+providers_app = typer.Typer(no_args_is_help=True, help="Choose which providers ModelSpend may use by default.")
+models_app = typer.Typer(no_args_is_help=True, help="See which models are routable and turn individual models on or off.")
+sources_app = typer.Typer(no_args_is_help=True, help="Where each provider's official pricing page lives (change it if a URL moves).")
 app.add_typer(catalog_app, name="catalog")
+app.add_typer(keys_app, name="keys")
+app.add_typer(providers_app, name="providers")
+app.add_typer(models_app, name="models")
+app.add_typer(sources_app, name="sources")
 app.add_typer(eval_app, name="eval")
 
 SYNTH_BANNER = "[SYNTHETIC CATALOG: fictional models and prices; never use for real routing]"
@@ -402,6 +413,7 @@ def catalog_set(ref: str, assignments: list[str] = typer.Argument(..., help="dot
 def catalog_template(ref: str):
     """Print an `add_models` skeleton for overrides.json. Fill every field from the provider's official docs."""
     prov, _, mid = ref.partition("/")
+    price_url = (resolve_sources(Config.from_env()).get(prov) or Source(prov, "<official pricing page>", "")).pricing_url
     typer.echo(json.dumps({"add_models": [{
         "provider": prov, "id": mid, "availability": "available", "verified_on": str(date.today()),
         "availability_source_url": "<official models page URL>",
@@ -410,7 +422,7 @@ def catalog_template(ref: str):
                          "reasoning": None},
         "pricing": {"currency": "USD", "input_per_mtok": None, "output_per_mtok": None, "cached_input_per_mtok": None,
                     "cache_write_per_mtok": None, "effective_date": "<yyyy-mm-dd>", "verified_on": str(date.today()),
-                    "source_url": "<official pricing page URL>", "reasoning_in_output": True, "conditions": []},
+                    "source_url": price_url, "reasoning_in_output": True, "conditions": []},
         "tier": None, "tier_note": "editorial prior: 1 small/fast, 2 mid, 3 frontier"}]}, indent=2))
 
 
@@ -484,6 +496,261 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
     elif write:
         typer.echo("not writing simulated evidence", err=True)
     typer.echo("Note: evidence counts only influence routing once n meets the profile minimum (see `modelspend policy`).")
+
+
+# ---------------------------------------------------------------- keys
+def _prov(p: str) -> str:
+    from .types import normalize_provider
+    try:
+        return normalize_provider(p)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+
+
+@keys_app.command("set")
+def keys_set(provider: str, key: Optional[str] = typer.Option(None, "--key", help="Avoid: it lands in your shell history. Omit to be prompted (input hidden)."),
+             stdin: bool = typer.Option(False, "--stdin", help="Read the key from standard input (for scripts).")):
+    """Save a provider's API key to ~/.modelspend/keys.env (chmod 600). A real environment variable still overrides it."""
+    prov = _prov(provider)
+    cfg = Config.from_env()
+    if stdin:
+        key = sys.stdin.readline().strip()
+    elif key is None:
+        key = typer.prompt(f"{prov} API key (input hidden)", hide_input=True).strip()
+    if not key:
+        typer.echo("empty key; nothing saved", err=True)
+        raise typer.Exit(2)
+    data = read_keys_file(cfg.home)
+    data[KEY_ENV[prov][0]] = key
+    p = write_keys_file(cfg.home, data)
+    typer.echo(f"saved {prov} key to {p} (readable only by you). Next: modelspend keys test {prov}")
+    if cfg.key_sources.get(prov) == "environment":
+        typer.echo(f"note: {KEY_ENV[prov][0]} is set in your environment and takes precedence over the saved key.")
+
+
+@keys_app.command("list")
+def keys_list():
+    """Which providers have a key, and where it comes from. Keys are never printed."""
+    cfg = Config.from_env()
+    for p in PROVIDERS_ORDER:
+        src = cfg.key_sources.get(p)
+        typer.echo(f"{p:<10}{'set (' + src + ')' if src else 'not set':<26}env var: {' or '.join(KEY_ENV[p])}")
+    typer.echo(f"\nkeys file: {keys_path(cfg.home)} ({'exists' if keys_path(cfg.home).exists() else 'not created yet'})")
+
+
+@keys_app.command("remove")
+def keys_remove(provider: str):
+    """Delete a provider's key from the keys file (does not touch your environment)."""
+    prov = _prov(provider)
+    cfg = Config.from_env()
+    data = read_keys_file(cfg.home)
+    gone = [n for n in KEY_ENV[prov] if data.pop(n, None) is not None]
+    write_keys_file(cfg.home, data)
+    typer.echo(f"removed {prov} key from the keys file" if gone else f"no {prov} key in the keys file")
+
+
+@keys_app.command("test")
+def keys_test(provider: Optional[str] = typer.Argument(None)):
+    """Check that a key works by listing the provider's models (a read-only call; no tokens are generated)."""
+    cfg = Config.from_env()
+    adapters = build_adapters(cfg)
+    targets = [_prov(provider)] if provider else list(adapters)
+    if not targets:
+        typer.echo("no keys configured; run: modelspend keys set <provider>", err=True)
+        raise typer.Exit(1)
+    bad = 0
+
+    async def go():
+        nonlocal bad
+        for p in targets:
+            if p not in adapters:
+                typer.echo(f"{p:<10}no key configured")
+                bad += 1
+                continue
+            try:
+                n = len(await adapters[p].list_models())
+                typer.echo(f"{p:<10}OK ({n} models visible to this key)")
+            except Exception as e:  # noqa: BLE001
+                typer.echo(f"{p:<10}FAILED: {getattr(e, 'kind', type(e).__name__)} ({getattr(e, 'message', str(e))[:100]})")
+                bad += 1
+    asyncio.run(go())
+    raise typer.Exit(1 if bad else 0)
+
+
+PROVIDERS_ORDER = ("anthropic", "openai", "google", "xai")
+
+
+# ---------------------------------------------------------------- providers / models / status
+def routability(m, cfg: Config) -> list[str]:
+    """Why a model would NOT be routed right now ([] = routable). Mirrors the router's hard constraints."""
+    why = []
+    if m.provider not in cfg.api_keys:
+        why.append("no API key")
+    if cfg.default_providers and m.provider not in cfg.default_providers:
+        why.append("provider not enabled")
+    if m.ref in cfg.deny_models or (cfg.allow_models and m.ref not in cfg.allow_models):
+        why.append("turned off by you")
+    if m.availability != "available":
+        why.append(f"availability {m.availability} (run `modelspend catalog sync`)" if m.availability == "unverified" else f"availability {m.availability}")
+    if (m.pricing is None or not m.pricing.known) and not cfg.allow_unpriced:
+        why.append("no pricing (see `modelspend catalog set`, or MODELSPEND_ALLOW_UNPRICED)")
+    if m.limits.context_tokens is None or m.limits.max_output_tokens is None:
+        why.append("limits unknown")
+    if m.tier is None and not m.evidence:
+        why.append("no tier")
+    return why
+
+
+def _save_list(cfg: Config, key: str, values: list[str]) -> None:
+    s = load_settings(cfg.home)
+    s[key] = sorted(set(values))
+    if not s[key]:
+        s.pop(key)
+    save_settings(cfg.home, s)
+
+
+@providers_app.command("list")
+def providers_list(catalog: Optional[str] = CAT):
+    cfg = Config.from_env()
+    cat = _catalog(cfg, catalog)
+    typer.echo(f"{'provider':<11}{'key':<8}{'enabled':<9}{'models':>7}{'routable':>10}")
+    for p in PROVIDERS_ORDER:
+        ms = [m for m in cat.models if m.provider == p]
+        ok = [m for m in ms if not routability(m, cfg)]
+        enabled = "yes" if (not cfg.default_providers or p in cfg.default_providers) else "no"
+        typer.echo(f"{p:<11}{'yes' if p in cfg.api_keys else 'no':<8}{enabled:<9}{len(ms):>7}{len(ok):>10}")
+    if cfg.default_providers:
+        typer.echo(f"\ndefault allowlist: {', '.join(cfg.default_providers)}")
+    else:
+        typer.echo("\nno default allowlist set: requests must name providers. Set one: modelspend providers enable anthropic openai")
+
+
+@providers_app.command("enable")
+def providers_enable(providers: list[str] = typer.Argument(...)):
+    """Add providers to the default allowlist (used when a request does not name providers)."""
+    cfg = Config.from_env()
+    new = [_prov(p) for p in providers]
+    s = load_settings(cfg.home)
+    _save_list(cfg, "providers", list(s.get("providers", [])) + new)
+    typer.echo(f"default providers: {', '.join(sorted(set(s.get('providers', [])) | set(new)))}  (saved in {settings_path(cfg.home)})")
+    if "MODELSPEND_PROVIDERS" in __import__("os").environ:
+        typer.echo("note: MODELSPEND_PROVIDERS is set in your environment and overrides this setting.")
+    for p in new:
+        if p not in cfg.api_keys:
+            typer.echo(f"note: no API key for {p} yet: modelspend keys set {p}")
+
+
+@providers_app.command("disable")
+def providers_disable(providers: list[str] = typer.Argument(...)):
+    cfg = Config.from_env()
+    drop = {_prov(p) for p in providers}
+    s = load_settings(cfg.home)
+    keep = [p for p in s.get("providers", []) if p not in drop]
+    _save_list(cfg, "providers", keep)
+    typer.echo(f"default providers: {', '.join(keep) or '(none)'}")
+
+
+@models_app.command("list")
+def models_list(provider: Optional[str] = None, catalog: Optional[str] = CAT):
+    """Every catalog model, whether it is routable now, and if not, why."""
+    cfg = Config.from_env()
+    cat = _catalog(cfg, catalog)
+    for m in cat.models:
+        if provider and m.provider != _prov(provider):
+            continue
+        why = routability(m, cfg)
+        typer.echo(f"{'ROUTABLE' if not why else 'off     '}  {m.ref:<42} tier {m.tier or '-'}  " + ("" if not why else "(" + "; ".join(why) + ")"))
+
+
+@models_app.command("disable")
+def models_disable(refs: list[str] = typer.Argument(..., help="provider/model-id, e.g. anthropic/claude-opus-5-5")):
+    """Never route to these models (stored in settings.json; the catalog is untouched)."""
+    cfg = Config.from_env()
+    cat = _catalog(cfg, None)
+    unknown = [r for r in refs if r not in {m.ref for m in cat.models}]
+    if unknown:
+        typer.echo(f"unknown model(s): {', '.join(unknown)} (see `modelspend models list`)", err=True)
+        raise typer.Exit(2)
+    _save_list(cfg, "deny_models", cfg.deny_models + refs)
+    typer.echo(f"turned off: {', '.join(refs)}")
+
+
+@models_app.command("enable")
+def models_enable(refs: list[str] = typer.Argument(...)):
+    cfg = Config.from_env()
+    _save_list(cfg, "deny_models", [r for r in cfg.deny_models if r not in refs])
+    typer.echo(f"turned on: {', '.join(refs)}")
+
+
+@app.command()
+def status(catalog: Optional[str] = CAT):
+    """One-screen overview: keys, enabled providers, routable models, pricing sources."""
+    cfg = Config.from_env()
+    cat = _catalog(cfg, catalog)
+    typer.echo(f"home: {cfg.home}   catalog {cat.version}   policy {POLICY_VERSION}")
+    typer.echo("\nproviders:")
+    providers_list(catalog)
+    routable = [m for m in cat.models if not routability(m, cfg)]
+    typer.echo(f"\nroutable models ({len(routable)}):")
+    for m in routable:
+        typer.echo(f"  {m.ref}")
+    if not routable:
+        typer.echo("  none yet. Typical fixes: modelspend keys set <provider>; modelspend catalog sync --provider <provider> --write")
+    typer.echo("\npricing sources (change with `modelspend sources set <provider> <url>`):")
+    for p, s in resolve_sources(cfg).items():
+        typer.echo(f"  {p:<10}{s.pricing_url}  [{s.origin}]")
+
+
+# ---------------------------------------------------------------- sources
+@sources_app.command("list")
+def sources_list():
+    cfg = Config.from_env()
+    snaps = load_snapshots(cfg)
+    for p, s in resolve_sources(cfg).items():
+        snap = snaps.get(p)
+        base = f"baseline accepted {snap['accepted_on']}" if snap and snap.get("url") == s.pricing_url else "no baseline"
+        typer.echo(f"{p:<10}{s.pricing_url}\n          origin: {s.origin} | {base}")
+
+
+@sources_app.command("set")
+def sources_set(provider: str, url: str):
+    """Point a provider at a different pricing page. Tracking parameters (utm_*) are stripped."""
+    prov = _prov(provider)
+    try:
+        stored = set_user_source(Config.from_env(), prov, url)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+    typer.echo(f"{prov} pricing URL -> {stored}" + ("  (tracking parameters removed)" if stored != url.strip() else ""))
+    typer.echo("Catalog entries without their own source_url now cite this page. Re-verify prices against it, then `modelspend sources check --accept`.")
+
+
+@sources_app.command("reset")
+def sources_reset(provider: str):
+    """Go back to the shipped URL for a provider."""
+    prov = _prov(provider)
+    set_user_source(Config.from_env(), prov, None)
+    typer.echo(f"{prov}: using {resolve_sources(Config.from_env(), env={})[prov].pricing_url}")
+
+
+@sources_app.command("check")
+def sources_check(provider: Optional[str] = typer.Argument(None),
+                  accept: bool = typer.Option(False, "--accept", help="Record the page's current content as the baseline (after you verified prices against it).")):
+    """Fetch each pricing page and say whether it CHANGED since your last accepted baseline. Never edits prices."""
+    cfg = Config.from_env()
+    srcs = resolve_sources(cfg)
+    targets = [srcs[_prov(provider)]] if provider else list(srcs.values())
+    changed = 0
+    for s in targets:
+        r = check_source(cfg, s, accept=accept)
+        extra = f" | redirected to {r['final_url']}" if r.get("redirected") else ""
+        typer.echo(f"{s.provider:<10}{r['state']:<12}{s.pricing_url}{extra}" + (f" ({r['detail']})" if r.get("detail") else "")
+                   + (" | baseline saved" if r.get("accepted") else ""))
+        changed += r["state"] == "CHANGED"
+    if changed:
+        typer.echo("\nA page changed: re-verify its prices, update the catalog (`modelspend catalog set ...`), then run `sources check --accept`.")
+    raise typer.Exit(1 if changed else 0)
 
 
 def main() -> None:

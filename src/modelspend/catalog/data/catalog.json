@@ -7,7 +7,7 @@
       "id": "claude-haiku-5-5",
       "display_name": "Claude Haiku 5.5",
       "availability": "unverified",
-      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "notes": "Pricing verified on 2026-10-12 against Anthropic's official pricing pages (the pricing URL comes from sources.json, so it can be changed with `modelspend sources set anthropic <url>`). The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
       "limits": {
         "context_tokens": null,
         "max_output_tokens": null
@@ -30,7 +30,7 @@
         "cache_write_per_mtok": 0.125,
         "effective_date": null,
         "verified_on": "2026-10-12",
-        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "source_url": null,
         "reasoning_in_output": true,
         "long_context_tiers": [
           {
@@ -54,7 +54,7 @@
       "id": "claude-sonnet-5-5",
       "display_name": "Claude Sonnet 5.5",
       "availability": "unverified",
-      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "notes": "Pricing verified on 2026-10-12 against Anthropic's official pricing pages (the pricing URL comes from sources.json, so it can be changed with `modelspend sources set anthropic <url>`). The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
       "limits": {
         "context_tokens": null,
         "max_output_tokens": null
@@ -77,7 +77,7 @@
         "cache_write_per_mtok": 2.5,
         "effective_date": null,
         "verified_on": "2026-10-12",
-        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "source_url": null,
         "reasoning_in_output": true,
         "long_context_tiers": [],
         "conditions": [
@@ -93,7 +93,7 @@
       "id": "claude-opus-5-5",
       "display_name": "Claude Opus 5.5",
       "availability": "unverified",
-      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "notes": "Pricing verified on 2026-10-12 against Anthropic's official pricing pages (the pricing URL comes from sources.json, so it can be changed with `modelspend sources set anthropic <url>`). The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
       "limits": {
         "context_tokens": null,
         "max_output_tokens": null
@@ -116,7 +116,7 @@
         "cache_write_per_mtok": 5.0,
         "effective_date": null,
         "verified_on": "2026-10-12",
-        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "source_url": null,
         "reasoning_in_output": true,
         "long_context_tiers": [],
         "conditions": [
@@ -132,7 +132,7 @@
       "id": "claude-fable-5-1",
       "display_name": "Claude Fable 5.1",
       "availability": "unverified",
-      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "notes": "Pricing verified on 2026-10-12 against Anthropic's official pricing pages (the pricing URL comes from sources.json, so it can be changed with `modelspend sources set anthropic <url>`). The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
       "limits": {
         "context_tokens": null,
         "max_output_tokens": null
@@ -155,7 +155,7 @@
         "cache_write_per_mtok": 12.5,
         "effective_date": null,
         "verified_on": "2026-10-12",
-        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "source_url": null,
         "reasoning_in_output": true,
         "long_context_tiers": [],
         "conditions": [

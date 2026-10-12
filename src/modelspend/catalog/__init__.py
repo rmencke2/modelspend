@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Config
+from ..sources import resolve_sources, shipped_sources
 from .models import CatalogFile, EvidenceItem, Model
 
 DATA = "modelspend.catalog.data"
@@ -58,6 +59,7 @@ class Catalog:
         path: str | Path | None = None,
         overrides: str | Path | dict | None = None,
         evidence: str | Path | dict | None = None,
+        sources: dict[str, str] | None = None,
     ) -> "Catalog":
         raw = json.loads(Path(path or shipped_catalog_path()).read_text())
         raw_models = {f'{m["provider"]}/{m["id"]}': m for m in raw.get("models", [])}
@@ -83,6 +85,12 @@ class Catalog:
             if ref in raw_models:
                 raw_models[ref].setdefault("evidence", {}).update(cats)
 
+        # pricing without its own source_url uses the provider's configured pricing page (see sources.py)
+        src = sources if sources is not None else shipped_sources()
+        for m in raw_models.values():
+            pr = m.get("pricing")
+            if pr and not pr.get("source_url") and src.get(m["provider"]):
+                pr["source_url"] = src[m["provider"]]
         merged = {**raw, "models": list(raw_models.values())}
         cf = CatalogFile.model_validate(merged)
         cf.validate_providers()
@@ -93,7 +101,7 @@ class Catalog:
     def from_config(cls, cfg: Config) -> "Catalog":
         ov = cfg.overrides_path if cfg.overrides_path and Path(cfg.overrides_path).exists() else None
         ev = cfg.evidence_path if cfg.evidence_path and Path(cfg.evidence_path).exists() else None
-        return cls.load(cfg.catalog_path, ov, ev)
+        return cls.load(cfg.catalog_path, ov, ev, {p: s.pricing_url for p, s in resolve_sources(cfg).items()})
 
     # ---- access --------------------------------------------------------------------------
     def get(self, ref: str) -> Model:
