@@ -10,39 +10,53 @@ An open-source router that picks **the lowest-cost AI model expected to suit eac
 
 ## Five-minute quickstart (no API keys needed)
 
+Requires **Python 3.10+** (check with `python3 --version`; on macOS the system Python is often 3.9, so `brew install python@3.12` and use `python3.12`). Old pip (e.g. 21.x) cannot do editable installs from `pyproject.toml`, hence the upgrade. The blocks below contain no inline comments so they paste cleanly into zsh.
+
 ```bash
-git clone https://github.com/rmencke2/modelspend.git && cd modelspend
-python3 -m venv .venv && source .venv/bin/activate   # needs Python 3.10+ (check: python --version)
-python -m pip install --upgrade pip                  # old pip (e.g. 21.x) cannot do editable installs from pyproject.toml
+git clone https://github.com/rmencke2/modelspend.git
+cd modelspend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
+```
 
-pytest -q                                     # 120+ tests, all mocked
-modelspend policy                             # the documented routing policy
+Run the tests (122, all mocked) and print the documented routing policy:
 
-# See routing decisions using the fictional SYNTHETIC catalog (prices are made up)
-modelspend preview "Classify this ticket: I was charged twice" \
-    --providers openai,anthropic --catalog synthetic --assume-keys --budget 0.01
+```bash
+pytest -q
+modelspend policy
+```
 
-# Compare premium vs cheapest-eligible vs ModelSpend on simulated data
+Preview routing decisions using the fictional SYNTHETIC catalog (its prices are made up; no call is made):
+
+```bash
+modelspend preview "Classify this ticket: I was charged twice" --providers openai,anthropic --catalog synthetic --assume-keys --budget 0.01
+```
+
+Compare premium vs cheapest-eligible vs ModelSpend on simulated data (mechanics only, not a benchmark):
+
+```bash
 modelspend eval run --mode mock --out /tmp/modelspend-report.md
 ```
 
 ### Using it for real
 
 1. **Add verified catalog entries.** `modelspend catalog template openai/<model-id>` prints a skeleton; fill it from the provider's official models and pricing pages and save it in `~/.modelspend/overrides.json` (`add_models`). `modelspend catalog validate` checks it; `modelspend catalog discover` lists IDs your keys can actually see. Details: [docs/catalog-verification.md](docs/catalog-verification.md).
-2. **Set keys and an explicit allowlist** (copy `.env.example`):
+2. **Set keys and an explicit allowlist** (copy `.env.example`). The allowlist can also be passed per request:
    ```bash
-   export ANTHROPIC_API_KEY=... OPENAI_API_KEY=...
-   export MODELSPEND_PROVIDERS=anthropic,openai      # or pass providers per request
+   export ANTHROPIC_API_KEY=...
+   export OPENAI_API_KEY=...
+   export MODELSPEND_PROVIDERS=anthropic,openai
    ```
-3. **Preview, then route:**
+3. **Preview, then route.** `preview` makes no call and spends nothing; `route` makes a real call and prints cost and explanation:
    ```bash
-   modelspend preview "Summarize: ..." --budget 0.02          # no call, no spend
-   modelspend route   "Summarize: ..." --budget 0.02          # real call; prints cost + explanation
+   modelspend preview "Summarize: ..." --budget 0.02
+   modelspend route "Summarize: ..." --budget 0.02
    ```
-4. **Serve it** (localhost only unless `MODELSPEND_API_TOKEN` is set):
+4. **Serve it** (localhost only unless `MODELSPEND_API_TOKEN` is set). It listens on http://127.0.0.1:8787 with the dashboard at `/dashboard`:
    ```bash
-   modelspend serve            # http://127.0.0.1:8787  (dashboard at /dashboard)
+   modelspend serve
    ```
 
 ## SDK
