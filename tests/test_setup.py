@@ -184,3 +184,18 @@ def test_cli_sources_check_exit_code_signals_change(monkeypatch):
     pages["v"] = "price 2"
     r = runner.invoke(app, ["sources", "check", "xai"])
     assert r.exit_code == 1 and "CHANGED" in r.output and "re-verify" in r.output
+
+
+def test_providers_list_does_not_claim_enabled_when_no_default_allowlist():
+    out = runner.invoke(app, ["providers", "list"]).output
+    assert out.count("per request") == 4
+    assert "per request" in out
+    runner.invoke(app, ["providers", "enable", "anthropic"])
+    rows = {l.split()[0]: l.split() for l in runner.invoke(app, ["providers", "list"]).output.splitlines()[1:5]}
+    assert rows["anthropic"][2] == "yes" and rows["openai"][2] == "no"
+
+
+def test_sources_listed_in_the_same_order_as_providers():
+    out = runner.invoke(app, ["sources", "list"]).output
+    order = [l.split()[0] for l in out.splitlines() if l and not l.startswith(" ")]
+    assert order == ["anthropic", "openai", "google", "xai"]

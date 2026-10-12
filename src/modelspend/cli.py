@@ -614,12 +614,12 @@ def _save_list(cfg: Config, key: str, values: list[str]) -> None:
 def providers_list(catalog: Optional[str] = CAT):
     cfg = Config.from_env()
     cat = _catalog(cfg, catalog)
-    typer.echo(f"{'provider':<11}{'key':<8}{'enabled':<9}{'models':>7}{'routable':>10}")
+    typer.echo(f"{'provider':<11}{'key':<8}{'enabled':<13}{'models':>7}{'routable':>10}")
     for p in PROVIDERS_ORDER:
         ms = [m for m in cat.models if m.provider == p]
         ok = [m for m in ms if not routability(m, cfg)]
-        enabled = "yes" if (not cfg.default_providers or p in cfg.default_providers) else "no"
-        typer.echo(f"{p:<11}{'yes' if p in cfg.api_keys else 'no':<8}{enabled:<9}{len(ms):>7}{len(ok):>10}")
+        enabled = ("yes" if p in cfg.default_providers else "no") if cfg.default_providers else "per request"
+        typer.echo(f"{p:<11}{'yes' if p in cfg.api_keys else 'no':<8}{enabled:<13}{len(ms):>7}{len(ok):>10}")
     if cfg.default_providers:
         typer.echo(f"\ndefault allowlist: {', '.join(cfg.default_providers)}")
     else:
@@ -698,7 +698,7 @@ def status(catalog: Optional[str] = CAT):
     if not routable:
         typer.echo("  none yet. Typical fixes: modelspend keys set <provider>; modelspend catalog sync --provider <provider> --write")
     typer.echo("\npricing sources (change with `modelspend sources set <provider> <url>`):")
-    for p, s in resolve_sources(cfg).items():
+    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: PROVIDERS_ORDER.index(kv[0])):
         typer.echo(f"  {p:<10}{s.pricing_url}  [{s.origin}]")
 
 
@@ -707,7 +707,7 @@ def status(catalog: Optional[str] = CAT):
 def sources_list():
     cfg = Config.from_env()
     snaps = load_snapshots(cfg)
-    for p, s in resolve_sources(cfg).items():
+    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: PROVIDERS_ORDER.index(kv[0])):
         snap = snaps.get(p)
         base = f"baseline accepted {snap['accepted_on']}" if snap and snap.get("url") == s.pricing_url else "no baseline"
         typer.echo(f"{p:<10}{s.pricing_url}\n          origin: {s.origin} | {base}")
@@ -740,7 +740,7 @@ def sources_check(provider: Optional[str] = typer.Argument(None),
     """Fetch each pricing page and say whether it CHANGED since your last accepted baseline. Never edits prices."""
     cfg = Config.from_env()
     srcs = resolve_sources(cfg)
-    targets = [srcs[_prov(provider)]] if provider else list(srcs.values())
+    targets = [srcs[_prov(provider)]] if provider else [srcs[p] for p in PROVIDERS_ORDER if p in srcs]
     changed = 0
     for s in targets:
         r = check_source(cfg, s, accept=accept)
