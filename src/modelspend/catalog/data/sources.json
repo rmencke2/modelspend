@@ -1,0 +1,7 @@
+{
+  "_comment": "Where each provider's official pricing page lives. Override per user with `modelspend sources set <provider> <url>`, in ~/.modelspend/sources.json, or with MODELSPEND_PRICING_URL_<PROVIDER>. Catalog entries whose pricing has no source_url of its own use these.",
+  "anthropic": {"pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing"},
+  "openai": {"pricing_url": "https://developers.openai.com/api/docs/pricing"},
+  "google": {"pricing_url": "https://ai.google.dev/gemini-api/docs/pricing"},
+  "xai": {"pricing_url": "https://docs.x.ai/developers/pricing"}
+}

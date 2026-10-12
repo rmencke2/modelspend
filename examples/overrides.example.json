@@ -1,0 +1,18 @@
+{
+  "_comment": "Every null must be filled from the provider's OFFICIAL docs before the model can be routed to. Nothing here is real data.",
+  "add_models": [
+    {
+      "provider": "openai", "id": "<exact-model-id>", "availability": "available", "verified_on": "<yyyy-mm-dd>",
+      "availability_source_url": "<official models page>",
+      "limits": {"context_tokens": null, "max_output_tokens": null},
+      "capabilities": {"text": true, "streaming": null, "structured_output": null, "tool_calling": null, "temperature": null, "reasoning": null},
+      "pricing": {"currency": "USD", "input_per_mtok": null, "output_per_mtok": null, "cached_input_per_mtok": null,
+                  "cache_write_per_mtok": null, "effective_date": "<yyyy-mm-dd>", "verified_on": "<yyyy-mm-dd>",
+                  "source_url": "<official pricing page>", "reasoning_in_output": true, "long_context_tiers": [], "conditions": []},
+      "tier": null
+    }
+  ],
+  "models": {
+    "<provider>/<model-id>": {"availability": "unavailable"}
+  }
+}

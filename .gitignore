@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.env
+*.db
+build/
+dist/
+
+# runtime data that must never be committed
+keys.env
+*.log
+*.db-wal
+*.db-shm
+server.pid
+price_anchors.json
+settings.json
+overrides.json
+pricing_proposals/
