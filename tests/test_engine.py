@@ -137,6 +137,12 @@ async def test_auth_error_not_retried_but_fails_over(engine_factory):
     assert len(ad["google"].calls) == 1 and res.provider == "xai" and res.failovers == 1
 
 
+async def test_quota_error_not_retried_but_fails_over(engine_factory):
+    eng, ad = engine_factory({"google": lambda r, n: ProviderError("google", "quota", "no credits", 429)})
+    res = await eng.run(R(providers=["google", "xai"]))
+    assert len(ad["google"].calls) == 1 and res.provider == "xai" and res.failovers == 1
+
+
 async def test_bad_request_fails_fast(engine_factory):
     eng, ad = engine_factory({"openai": lambda r, n: ProviderError("openai", "bad_request", "no", 400)})
     with pytest.raises(AllAttemptsFailed):

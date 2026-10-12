@@ -310,7 +310,7 @@ class Engine:
                 try:
                     resp = await self._with_retries(req, cur, purpose, ledger, counters)
                 except ProviderError as e:
-                    nxt = self._next(plan, tried, ledger) if e.kind in ProviderError.RETRYABLE | {"auth"} else None
+                    nxt = self._next(plan, tried, ledger) if e.kind in ProviderError.FAILOVER else None
                     if nxt is None:
                         if last is None:
                             raise AllAttemptsFailed(
@@ -455,7 +455,7 @@ class Engine:
                     await self.sleep(self.cfg.retry_backoff_s * (2 ** (attempt_no - 1)))
                     purpose = "retry"
                     continue
-                nxt = self._next(plan, tried, ledger) if e.kind in ProviderError.RETRYABLE | {"auth"} else None
+                nxt = self._next(plan, tried, ledger) if e.kind in ProviderError.FAILOVER else None
                 if nxt is None:
                     self._record_failure(plan, ledger, first_estimate, req, t0, "all_attempts_failed")
                     raise AllAttemptsFailed(f"stream could not start; last error: {e}", attempts=ledger.attempts, plan=plan) from e

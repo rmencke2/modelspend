@@ -62,12 +62,13 @@ class SandboxUnavailable(ModelSpendError):
 class ProviderError(Exception):
     """Normalized provider failure.
 
-    kind: auth | rate_limit | timeout | connection | server | bad_request |
+    kind: auth | quota | rate_limit | timeout | connection | server | bad_request |
           unsupported | unknown.  `retryable` kinds may be retried / failed over.
     `maybe_billed` is True when the provider may have processed (and charged for) the request.
     """
 
     RETRYABLE = {"rate_limit", "timeout", "connection", "server"}
+    FAILOVER = RETRYABLE | {"auth", "quota"}  # another provider may succeed; "quota" (no credits) is never retried on the same one
     MAYBE_BILLED = {"timeout", "server", "unknown"}
 
     def __init__(self, provider: str, kind: str, message: str, status_code: int | None = None):

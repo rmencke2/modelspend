@@ -113,6 +113,9 @@ async def test_error_normalization():
     for status, kind in [(401, "auth"), (500, "server"), (400, "bad_request")]:
         e = type("E", (Exception,), {"status_code": status})("x")
         assert classify_exception("openai", e).kind == kind
+    quota = type("RateLimitError", (Exception,), {"status_code": 429})("Error code: 429 - {'code': 'credit_balance_exhausted', 'type': 'insufficient_quota'}")
+    err = classify_exception("openai", quota)
+    assert err.kind == "quota" and not err.retryable and err.kind in ProviderError.FAILOVER  # no credits: never retried, may fail over
     assert classify_exception("x", type("APITimeoutError", (Exception,), {})("t")).kind == "timeout"
 
 

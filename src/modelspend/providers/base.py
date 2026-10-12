@@ -65,6 +65,10 @@ class ProviderAdapter(ABC):
         return {i: {} for i in await self.list_models()}
 
 
+# Account has no credit / hit a spending cap: retrying the same provider cannot help (unlike a transient 429).
+_QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exceeded your current quota", "billing_hard_limit")
+
+
 def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     """Map SDK exceptions onto normalized kinds without importing the SDKs here."""
     if isinstance(exc, ProviderError):
@@ -75,7 +79,10 @@ def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     from ..redact import scrub
     msg = scrub(str(exc))[:300]  # scrub BEFORE truncating, so a cut can never leave half a key behind
     low = name.lower()
-    if "timeout" in low or "timedout" in low:
+    text = msg.lower()
+    if any(m in text for m in _QUOTA_MARKERS):
+        kind = "quota"
+    elif "timeout" in low or "timedout" in low:
         kind = "timeout"
     elif "connection" in low or "connect" in low:
         kind = "connection"
