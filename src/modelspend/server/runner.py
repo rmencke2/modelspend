@@ -181,8 +181,9 @@ def start_background(cfg: Config, host: str | None, port: int | None, catalog: s
         cmd += ["--port", str(port)]
     if catalog:
         cmd += ["--catalog", catalog]
-    cfg.home.mkdir(parents=True, exist_ok=True)
-    log = open(log_path(cfg), "ab")
+    from ..config import private_mkdir
+    private_mkdir(cfg.home)
+    log = os.fdopen(os.open(log_path(cfg), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab")
     kw: dict = {"start_new_session": True} if os.name != "nt" else {"creationflags": 0x00000008 | 0x00000200}
     proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, env=os.environ.copy(), **kw)
     h, p = host or cfg.host, port or cfg.port

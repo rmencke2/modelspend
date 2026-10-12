@@ -11,8 +11,37 @@ import re
 from typing import Any, Awaitable, Callable
 
 import jsonschema
+from referencing import Registry
+from referencing.exceptions import NoSuchResource
 
 from .types import RouteRequest, ValidationReport, ValidationResult, ValidatorSpec
+
+
+def _deny_retrieval(uri: str):
+    raise NoSuchResource(ref=uri)
+
+
+def validate_schema(instance: Any, schema: dict) -> None:
+    """jsonschema validation that can NEVER fetch a URL. A schema is request-supplied data, and jsonschema resolves remote
+    `$ref`s over the network by default (a blind SSRF); only local references ('#/...') are allowed."""
+    for ref in _refs(schema):
+        if not ref.startswith("#"):
+            raise jsonschema.exceptions.SchemaError(f"only local $ref values (starting with '#') are allowed, got {ref[:80]!r}")
+    cls = jsonschema.validators.validator_for(schema)
+    cls.check_schema(schema)
+    cls(schema, registry=Registry(retrieve=_deny_retrieval)).validate(instance)
+
+
+def _refs(node: Any):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in ("$ref", "$dynamicRef", "$recursiveRef") and isinstance(v, str):
+                yield v
+            else:
+                yield from _refs(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _refs(v)
 
 
 def _json(text: str) -> Any:
@@ -32,7 +61,7 @@ def run_spec(spec: ValidatorSpec, text: str, sandbox_runner: Callable[[str, dict
     extra = spec.model_extra or {}
     try:
         if t == "json_schema":
-            jsonschema.validate(_json(text), extra["schema"])
+            validate_schema(_json(text), extra["schema"])
             return ValidationResult(name=name, passed=True)
         if t == "valid_json":
             _json(text)

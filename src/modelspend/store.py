@@ -31,7 +31,8 @@ class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
         if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            from .config import private_mkdir
+            private_mkdir(Path(self.path).parent)
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)

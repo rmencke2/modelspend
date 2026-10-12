@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from .redact import scrub
+
 
 class ModelSpendError(Exception):
     code = "modelspend_error"
     http_status = 500
 
     def __init__(self, message: str, **details: Any):
+        message = scrub(message)
         super().__init__(message)
         self.message = message
         self.details = details
@@ -68,6 +71,7 @@ class ProviderError(Exception):
     MAYBE_BILLED = {"timeout", "server", "unknown"}
 
     def __init__(self, provider: str, kind: str, message: str, status_code: int | None = None):
+        message = scrub(message)  # provider errors can echo (part of) the API key
         super().__init__(f"[{provider}] {kind}: {message}")
         self.provider = provider
         self.kind = kind

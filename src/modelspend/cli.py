@@ -43,8 +43,16 @@ app.add_typer(eval_app, name="eval")
 SYNTH_BANNER = "[SYNTHETIC CATALOG: fictional models and prices; never use for real routing]"
 
 
+def _version(value: bool) -> None:
+    if value:
+        from . import __version__
+        typer.echo(f"modelspend {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _root(env_file: Optional[Path] = typer.Option(None, "--env-file", help="KEY=VALUE file with API keys (never stored or logged).")):
+def _root(env_file: Optional[Path] = typer.Option(None, "--env-file", help="KEY=VALUE file with API keys (never stored or logged)."),
+          version: bool = typer.Option(False, "--version", callback=_version, is_eager=True, help="Show the version and exit.")):
     if env_file:
         for k, v in parse_env_file(env_file).items():
             os.environ.setdefault(k, v)

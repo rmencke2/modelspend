@@ -72,3 +72,37 @@ async def test_valid_format_note_when_criteria_unverified():
                      validators=[{"type": "valid_json"}])
     rep = await validate(r, "{}")
     assert rep.status == "passed" and "not individually verified" in rep.note
+
+
+def test_request_supplied_schema_cannot_make_the_server_fetch_urls():
+    """Regression: jsonschema resolves remote $refs over the network by default (blind SSRF)."""
+    import socket, threading
+    hits = []
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    port = srv.getsockname()[1]
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+                hits.append(c.recv(100))
+                c.close()
+            except OSError:
+                break
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        for ref in (f"http://127.0.0.1:{port}/x.json", f"https://127.0.0.1:{port}/x.json", f"file:///etc/passwd"):
+            r = run_spec(spec(type="json_schema", schema={"$ref": ref}), '{"a": 1}')
+            assert not r.passed and "only local" in r.detail
+        nested = {"type": "object", "properties": {"a": {"items": [{"$ref": f"http://127.0.0.1:{port}/y"}]}}}
+        assert not run_spec(spec(type="json_schema", schema=nested), '{"a": 1}').passed
+        assert hits == [], "the server must never open a connection because of a schema"
+    finally:
+        srv.close()
+
+
+def test_local_refs_still_work():
+    schema = {"$defs": {"n": {"type": "integer"}}, "type": "object", "properties": {"a": {"$ref": "#/$defs/n"}}, "required": ["a"]}
+    assert run_spec(spec(type="json_schema", schema=schema), '{"a": 3}').passed
+    assert not run_spec(spec(type="json_schema", schema=schema), '{"a": "x"}').passed

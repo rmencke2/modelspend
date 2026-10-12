@@ -144,17 +144,25 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
 
     loopbacks = {"127.0.0.1", "localhost", "::1"} | {cfg.host} | {h.strip() for h in os.environ.get("MODELSPEND_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
-    async def guard(request: Request) -> None:
-        """Browser-safety for anything that spends money or changes settings. With a bearer token configured this is already
-        covered (browsers never attach it cross-site). Without one the server is local-only, so a web page you visit must not be
-        able to drive it: require JSON content type (forces a CORS preflight), a loopback Host (DNS-rebinding) and a same-origin Origin."""
+    async def host_guard(request: Request) -> None:
+        """DNS-rebinding protection for every data endpoint (reads too). Without a bearer token the server is local-only, so the
+        Host header must name this machine; a hostile web page that re-points its own DNS name at 127.0.0.1 carries its own name."""
         if cfg.api_token:
             return
-        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
-            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
         host = request.headers.get("host", "")
         if (urlparse("//" + host).hostname or "") not in loopbacks:
             raise HTTPException(status_code=403, detail="unexpected Host header (DNS-rebinding protection); add it to MODELSPEND_ALLOWED_HOSTS if intended")
+
+    async def guard(request: Request) -> None:
+        """Browser-safety for anything that spends money or changes settings. With a bearer token configured this is already
+        covered (browsers never attach it cross-site). Without one: a loopback Host, a JSON content type (forces a CORS
+        preflight) and a same-origin Origin."""
+        if cfg.api_token:
+            return
+        await host_guard(request)
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        host = request.headers.get("host", "")
         origin = request.headers.get("origin")
         if origin and urlparse(origin).netloc != host:
             raise HTTPException(status_code=403, detail="cross-origin request refused")
@@ -241,18 +249,18 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
         plan = await engine.plan(req)
         return JSONResponse(json.loads(plan.model_dump_json()))
 
-    @app.get("/v1/catalog", dependencies=[Depends(auth)])
+    @app.get("/v1/catalog", dependencies=[Depends(auth), Depends(host_guard)])
     async def catalog():
         c = engine.catalog
         return {"catalog_version": c.version, "models": [json.loads(m.model_dump_json()) for m in c.models],
                 "issues": [str(i) for i in c.validate(max_age_days=cfg.max_pricing_age_days)]}
 
-    @app.get("/v1/policy", dependencies=[Depends(auth)])
+    @app.get("/v1/policy", dependencies=[Depends(auth), Depends(host_guard)])
     async def policy():
         return {"policy_version": POLICY_VERSION, "profiles": {k.value: {**v.__dict__, "name": k.value} for k, v in PROFILES.items()}}
 
-    @app.get("/v1/usage", dependencies=[Depends(auth)])
-    @app.get("/dashboard/data", dependencies=[Depends(auth)])
+    @app.get("/v1/usage", dependencies=[Depends(auth), Depends(host_guard)])
+    @app.get("/dashboard/data", dependencies=[Depends(auth), Depends(host_guard)])
     async def usage():
         return engine.store.summary() if engine.store else {"totals": {"n": 0}, "recent": []}
 
@@ -273,7 +281,7 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
         except ValueError as e:
             raise InvalidRequest(str(e))
 
-    @app.get("/v1/sources", dependencies=[Depends(auth)])
+    @app.get("/v1/sources", dependencies=[Depends(auth), Depends(host_guard)])
     async def sources_get():
         return _sources_view()
 
@@ -302,7 +310,7 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
             _reload()
         return r
 
-    @app.get("/v1/pricing/proposals", dependencies=[Depends(auth)])
+    @app.get("/v1/pricing/proposals", dependencies=[Depends(auth), Depends(host_guard)])
     async def proposals(status: str = "pending"):
         return {"proposals": list_proposals(cfg, None if status == "all" else status)}
 

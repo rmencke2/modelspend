@@ -128,3 +128,70 @@ async def test_exact_token_count_refines_selected_candidate(catalog, cfg, store)
     from modelspend.types import Usage
     m = catalog.get(f"{r.provider}/{r.model}")
     assert r.attempts[0].estimated_cost_usd < cost_for(m, Usage(input_tokens=12345, output_tokens=1024))
+
+
+# ---------------------------------------------------------------- security hardening
+def test_provider_errors_never_carry_key_material():
+    import modelspend.redact as redact
+    from modelspend.errors import ProviderError, ModelSpendError
+    cfg = Config.from_env({"OPENAI_API_KEY": "sk-proj-REGISTERED-secret-value-123456", "MODELSPEND_HOME": "/tmp/x"})  # noqa: F841
+    msgs = [
+        "Incorrect API key provided: sk-proj-REGISTERED-secret-value-123456. You can find your key...",
+        "Incorrect API key provided: sk-proj-********************abcd",
+        "invalid x-api-key: sk-ant-api03-AAAAAAAAAAAAAAAAAAAA",
+        "API key not valid. Please pass a valid API key. key=AIzaSyA1234567890abcdefghijklmnopqrstu",
+        "401 Authorization: Bearer abcdef1234567890ABCDEF",
+        "xai key xai-ABCDEFGHIJKLMNOP1234 rejected",
+        '{"api_key": "abcdefgh12345678"}',
+    ]
+    for m in msgs:
+        e = ProviderError("openai", "auth", m, 401)
+        assert "REGISTERED" not in e.message and "[redacted]" in e.message, m
+        assert "AAAAAAAAAA" not in str(e) and "abcdef1234567890" not in str(e) and "AIzaSy" not in str(e)
+    assert "REGISTERED" not in ModelSpendError("failed with sk-proj-REGISTERED-secret-value-123456").message
+    assert redact.scrub("plain text, nothing secret, tokens=12") == "plain text, nothing secret, tokens=12"
+
+
+async def test_a_leaky_provider_error_does_not_reach_the_api_client(catalog, cfg, store):
+    from fastapi.testclient import TestClient
+    from modelspend.errors import ProviderError
+    from modelspend.server.app import create_app
+    cfg.default_providers = ["openai"]
+    cfg.api_keys["openai"] = "sk-live-THISISTHEKEY-0123456789"
+    from modelspend import redact as _r
+    _r.register(cfg.api_keys["openai"])
+    eng, ad = make_engine(catalog, cfg, {"openai": lambda r, n: ProviderError("openai", "auth", "bad key sk-live-THISISTHEKEY-0123456789", 401)}, store=store)
+    c = TestClient(create_app(eng, cfg), base_url="http://127.0.0.1:8787")
+    r = c.post("/v1/chat/completions", json={"model": "auto", "messages": [{"role": "user", "content": "classify this"}]})
+    assert r.status_code == 502 and "THISISTHEKEY" not in r.text and "[redacted]" in r.text
+
+
+def test_get_endpoints_refuse_dns_rebinding_hosts_but_allow_a_token(catalog, cfg):
+    from fastapi.testclient import TestClient
+    from modelspend.server.app import create_app
+    eng, _ = make_engine(catalog, cfg)
+    c = TestClient(create_app(eng, cfg), base_url="http://127.0.0.1:8787")
+    for path in ("/v1/usage", "/v1/catalog", "/v1/policy", "/dashboard/data", "/v1/sources", "/v1/pricing/proposals"):
+        assert c.get(path).status_code == 200, path
+        assert c.get(path, headers={"Host": "attacker.example:8787"}).status_code == 403, path
+    assert c.get("/healthz", headers={"Host": "attacker.example"}).status_code == 200  # liveness only, no data
+    cfg.api_token = "tok"
+    assert c.get("/v1/usage", headers={"Host": "anything.internal", "Authorization": "Bearer tok"}).status_code == 200
+
+
+def test_private_files_and_directories(tmp_path):
+    import os, stat
+    from modelspend.config import write_keys_file
+    home = tmp_path / "newhome"
+    write_keys_file(home, {"OPENAI_API_KEY": "k"})
+    assert stat.S_IMODE(os.stat(home).st_mode) == 0o700 and stat.S_IMODE(os.stat(home / "keys.env").st_mode) == 0o600
+    from modelspend.store import Store
+    s = Store(tmp_path / "fresh" / "m.db")
+    assert stat.S_IMODE(os.stat(tmp_path / "fresh").st_mode) == 0o700 and stat.S_IMODE(os.stat(tmp_path / "fresh" / "m.db").st_mode) == 0o600
+
+
+def test_cli_version_flag():
+    from typer.testing import CliRunner
+    from modelspend.cli import app
+    r = CliRunner().invoke(app, ["--version"])
+    assert r.exit_code == 0 and r.output.startswith("modelspend 0.")

@@ -22,7 +22,7 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-Run the tests (122, all mocked) and print the documented routing policy:
+Run the tests (all provider calls are mocked; no keys or network needed) and print the documented routing policy:
 
 ```bash
 pytest -q

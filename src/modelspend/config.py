@@ -38,6 +38,11 @@ def default_home(env: dict[str, str] | None = None) -> Path:
     return Path(e["MODELSPEND_HOME"]) if e.get("MODELSPEND_HOME") else Path.home() / ".modelspend"
 
 
+def private_mkdir(path: Path) -> None:
+    """Create a directory only the owner can enter (the home dir holds keys, usage metadata and settings)."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
 def keys_path(home: Path) -> Path:
     return home / KEYS_FILE
 
@@ -49,7 +54,11 @@ def read_keys_file(home: Path) -> dict[str, str]:
 
 def write_keys_file(home: Path, data: dict[str, str]) -> Path:
     p = keys_path(home)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(p.parent)
+    try:
+        os.chmod(p.parent, 0o700)  # a keys file inside a world-readable directory is only half protected
+    except OSError:
+        pass
     body = "# ModelSpend API keys (plain text, readable only by you). Real environment variables override these.\n"
     body += "".join(f"{k}={v}\n" for k, v in sorted(data.items()))
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # created 0600 so the key is never briefly world-readable
@@ -70,7 +79,7 @@ def load_settings(home: Path) -> dict:
 
 def save_settings(home: Path, data: dict) -> Path:
     p = settings_path(home)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(p.parent)
     p.write_text(json.dumps(data, indent=2, sort_keys=True))
     return p
 
@@ -108,6 +117,8 @@ class Config:
     api_token: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        from . import redact
+        redact.register(*self.api_keys.values(), self.api_token)
         self.home = Path(self.home)
         if self.db_path is None:
             self.db_path = self.home / "modelspend.db"
