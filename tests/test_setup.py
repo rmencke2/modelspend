@@ -314,3 +314,14 @@ def test_fetch_caps_the_body_and_ignores_proxy_env(monkeypatch):
     big = b"x" * (sources.MAX_PAGE_BYTES * 3)
     status, _, text = sources.fetch("https://pricing.example.com/", transport=httpx.MockTransport(lambda r: httpx.Response(200, content=big)))
     assert status == 200 and len(text) == sources.MAX_PAGE_BYTES
+
+
+def test_sync_exact_and_snapshot_filtering(monkeypatch):
+    info = {"gpt-5-mini": {}, "gpt-5-mini-2025-08-07": {}, "gpt-5-pro": {}, "gpt-5-codex": {}, "gpt-5": {}, "gpt-4.1": {}, "gpt-4.1-mini": {}}
+    _fake_listing(monkeypatch, "openai", info)
+    run = lambda *a: runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", *a])  # noqa: E731
+    loose = run("--only", "gpt-5").output                       # substring: matches the family but never dated snapshots
+    assert "gpt-5-pro" in loose and "gpt-5-mini-2025-08-07" not in loose
+    exact = run("--only", "gpt-5-mini,gpt-4.1", "--exact").output
+    assert "gpt-5-mini" in exact and "gpt-4.1 " in exact.replace("gpt-4.1  ", "gpt-4.1 ") and "gpt-5-pro" not in exact and "gpt-4.1-mini" not in exact
+    assert "gpt-5-mini-2025-08-07" in run("--only", "gpt-5-mini", "--snapshots").output

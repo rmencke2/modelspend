@@ -349,6 +349,7 @@ def catalog_discover(catalog: Optional[str] = CAT,
 from .overrides import apply_assignments, load_overrides as _load_overrides, save_overrides as _save_overrides  # noqa: E402
 
 
+_SNAPSHOT = __import__("re").compile(r"-(\d{4}-\d{2}-\d{2}|\d{8}|\d{4})$")
 LINE_TIER = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 3, "mythos": 3}
 
 
@@ -377,7 +378,9 @@ def sync_patch(ref_known: bool, mid: str, provider: str, info: dict, assume: lis
 def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this provider (default: every provider with a key)."),
                  assume: str = typer.Option("", help="Capabilities YOU assert after reading the docs, comma-separated: streaming,tools,temperature."),
                  add_new: bool = typer.Option(False, help="Also add models that are not in the catalog yet (pricing stays unknown). Requires --only."),
-                 only: str = typer.Option("", help="Comma-separated model-ID substrings to include, e.g. --only gpt-5,o4-mini. Needed with --add-new."),
+                 only: str = typer.Option("", help="Comma-separated model IDs to include (substring match; with --exact, whole IDs), e.g. --only gpt-5-mini,gpt-4.1. Needed with --add-new."),
+                 exact: bool = typer.Option(False, "--exact", help="Match --only values against whole model IDs instead of substrings."),
+                 snapshots: bool = typer.Option(False, "--snapshots", help="Also include dated snapshot IDs (e.g. gpt-4o-2024-08-06); hidden by default."),
                  write: bool = typer.Option(False, help="Write to overrides.json. Without it this is a dry run."),
                  catalog: Optional[str] = CAT):
     """Fill availability, token limits, structured-output support and a suggested tier from the provider's live model list.
@@ -414,8 +417,10 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
                 known = ref in {m.ref for m in cat.models}
                 if not known and not add_new:
                     continue
-                if only_l and not any(o in mid.lower() for o in only_l):
+                if only_l and not any((o == mid.lower()) if exact else (o in mid.lower()) for o in only_l):
                     continue
+                if not snapshots and not known and _SNAPSHOT.search(mid):
+                    continue  # dated snapshot of a model: route to the undated alias instead
                 has_tier = known and cat.get(ref).tier is not None
                 patch = sync_patch(known, mid, name, i, asm, today, has_tier)
                 if patch is None:

@@ -99,7 +99,7 @@ modelspend models list --provider openai
 
 (The numbers above are placeholders, not real prices.) Notes:
 
-- `--only` is required with `--add-new` so you don't import every model a key can list (embeddings, audio, image, legacy). Pick the IDs from `catalog discover`.
+- `--only` is required with `--add-new` so you don't import every model a key can list (embeddings, audio, image, legacy). Pick the IDs from `catalog discover`. It matches substrings; add `--exact` to match whole IDs (so `gpt-5-mini` does not also pull in `gpt-5-mini-pro`), and dated snapshot IDs are skipped unless you pass `--snapshots`.
 - Gemini's model list also returns token limits, so `sync` fills them in. OpenAI's and xAI's lists give IDs only, so set `limits.*` from the provider's model page.
 - `tier` is your honest editorial judgement (1 small/fast, 2 mid, 3 frontier); it is a prior, not a measurement.
 - If the provider reports reasoning tokens separately from output tokens, add `--reasoning-separate` to `catalog price`.
