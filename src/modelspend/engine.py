@@ -106,6 +106,11 @@ class Engine:
         self.router = Router(catalog, config, available_providers=set(adapters),
                              latency_lookup=store.latency_p50 if store else None)
 
+    def set_catalog(self, catalog: Catalog) -> None:
+        """Use a freshly loaded catalog (e.g. after prices were updated) without restarting."""
+        self.catalog = catalog
+        self.router.catalog = catalog
+
     # ================================================================ planning
     async def plan(self, req: RouteRequest, *, require_streaming: bool = False, ledger: Ledger | None = None) -> Plan:
         cl: Classification | None = None

@@ -15,16 +15,37 @@ th{color:var(--mut);font-weight:500}td.n,th.n{text-align:right;font-variant-nume
 .bar{height:8px;background:var(--a);border-radius:4px;min-width:1px}
 .note{color:var(--mut);font-size:12px}input{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
 .wrap{overflow-x:auto}
+nav{display:flex;gap:4px;margin:8px 0 12px;border-bottom:1px solid var(--line)}
+nav a{padding:6px 12px;color:var(--mut);text-decoration:none;border-bottom:2px solid transparent;cursor:pointer}
+nav a.on{color:var(--fg);border-bottom-color:var(--a);font-weight:600}
+button{padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
+button.pri{background:var(--a);color:#fff;border-color:var(--a)}button:disabled{opacity:.5;cursor:wait}
+input.url{width:100%;min-width:260px;box-sizing:border-box}textarea{width:100%;min-height:120px;box-sizing:border-box;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);font:12px/1.4 ui-monospace,monospace}
+select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
+.msg{font-size:12px;color:var(--mut);margin-top:4px;white-space:pre-wrap}.warn{color:#b54708}.ok{color:#067647}.neg{color:#067647}.pos{color:#b54708}
 </style></head><body><main>
 <h1>ModelSpend</h1>
 <p class="note">Local usage. <b>Token counts are exactly what the providers reported</b>, summed over every attempt (retries, escalations, judge). Cost is computed from those tokens and catalog prices when a price is known (your invoice is authoritative), otherwise shown as "unknown". No prompts or responses are stored.</p>
 <p id="auth" hidden><input id="tok" type="password" placeholder="API token"> <button onclick="saveTok()">Use</button></p>
+<nav><a id="nav-usage" class="on" href="#usage">Usage</a><a id="nav-pricing" href="#pricing">Pricing</a></nav>
+<section id="usage">
 <div class="tiles" id="tiles"></div>
 <h2>Tokens by provider</h2><div class="wrap"><table id="prov"></table></div>
 <h2>Tokens by task</h2><div class="wrap"><table id="task"></table></div>
 <h2>Tokens by model</h2><div class="wrap"><table id="model"></table></div>
 <h2>Validation outcomes</h2><div class="wrap"><table id="val"></table></div>
 <h2>Recent requests</h2><div class="wrap"><table id="recent"></table></div>
+</section>
+<section id="pricing" hidden>
+<p class="note">Each provider's <b>official pricing page</b>. Paste a new URL if one moves. <b>Check</b> says whether the page changed since you last accepted it; <b>Refresh prices</b> reads the page and proposes updates, which you review below. Nothing changes your catalog until you press Apply. Reading a changed page uses a few thousand tokens of your own provider key (shown in the result and in Usage); an unchanged page uses none.</p>
+<h2>Pricing pages</h2><div class="wrap"><table id="srcs"></table></div>
+<h2>Paste pricing text</h2>
+<p class="note">For pages that can't be fetched (they need JavaScript or block scripts): copy the pricing table from the provider's page and paste it here. The same checks apply: every number must appear in the text you paste.</p>
+<p><select id="pp"><option>anthropic</option><option>openai</option><option>google</option><option>xai</option></select> <button id="pbtn" class="pri">Extract prices from this text</button></p>
+<textarea id="ptxt" placeholder="Paste the pricing table text here"></textarea><div class="msg" id="pmsg"></div>
+<h2>Proposed price updates (waiting for your review)</h2><div id="props"></div>
+</section>
 <script>
 const $=id=>document.getElementById(id), n0=v=>(v||0).toLocaleString(), usd=v=>v==null?'unknown':'$'+(v).toFixed(v&&v<0.01?6:4);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -50,5 +71,48 @@ async function load(){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(
  tbl('recent',[['Time','ts','',v=>new Date(v*1000).toLocaleTimeString()],['Task','task'],['Model','model'],['Status','status'],['Validation','validation'],
   ['Esc.','escalations','n'],['In','input_tokens','n',n0],['Cached','cache_read_tokens','n',n0],['Out','output_tokens','n',n0],['Reasoning','reasoning_tokens','n',n0],
   ['Cost','actual_cost','n',usd],['ms','latency_ms','n']],d.recent||[]);}
-load();setInterval(load,5000);
+load();setInterval(()=>{if(!$('usage').hidden)load()},5000);
+function show(v){$('usage').hidden=v!=='pricing'?false:true;$('pricing').hidden=v!=='pricing';
+ $('nav-usage').className=v==='pricing'?'':'on';$('nav-pricing').className=v==='pricing'?'on':'';if(v==='pricing')loadPricing();else load()}
+window.addEventListener('hashchange',()=>show(location.hash.slice(1)));
+function api(path,method='GET',body){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(e){}
+ const h={'Content-Type':'application/json'};if(t)h.Authorization='Bearer '+t;
+ return fetch(path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body)}).then(async r=>{
+  const j=await r.json().catch(()=>({}));if(r.status==401){$('auth').hidden=false}
+  if(!r.ok)throw new Error((j.error&&j.error.message)||r.statusText);return j})}
+function say(id,text,cls){const e=$(id);if(e){e.className='msg '+(cls||'');e.textContent=text}}
+function describe(r){if(r.state==='error')return r.detail;const ex=r.extractor;
+ return r.state+(r.detail?': '+r.detail:'')+(ex?`  [${ex.model}, ${ex.total_tokens} tokens]`:'')}
+async function loadPricing(){
+ try{const d=await api('/v1/sources');
+  $('srcs').innerHTML='<tr><th>Provider</th><th>Pricing page URL</th><th>Baseline</th><th></th></tr>'+d.providers.map(p=>`<tr>
+   <td>${esc(p.provider)}</td><td><input class="url" data-p="${esc(p.provider)}" value="${esc(p.pricing_url)}"><div class="msg" id="m-${esc(p.provider)}">source: ${esc(p.origin)}</div></td>
+   <td>${p.baseline_accepted_on?esc(p.baseline_accepted_on):'<span class="note">none</span>'}</td>
+   <td style="white-space:nowrap"><button data-a="save" data-p="${esc(p.provider)}">Save</button> <button data-a="reset" data-p="${esc(p.provider)}">Reset</button>
+   <button data-a="check" data-p="${esc(p.provider)}">Check</button> <button class="pri" data-a="refresh" data-p="${esc(p.provider)}">Refresh prices</button></td></tr>`).join('')}catch(e){say('pmsg',String(e.message),'warn')}
+ loadProposals()}
+async function loadProposals(){
+ let d;try{d=await api('/v1/pricing/proposals')}catch(e){return}
+ $('props').innerHTML=d.proposals.length?d.proposals.map(p=>{
+  const rows=p.changes.flatMap(c=>c.fields.map(f=>`<tr><td>${esc(c.ref)}</td><td>${esc(f.field.replace('_per_mtok',''))}</td><td class="n">${f.old==null?'unset':'$'+esc(f.old)}</td><td class="n">$${esc(f.new)}</td>
+   <td class="n ${f.pct>0?'pos':'neg'}">${f.pct==null?'':(f.pct>0?'+':'')+esc(f.pct)+'%'}</td></tr>`)).join('');
+  const bad=(a,l,fn)=>a.length?`<div class="msg warn">${l}: ${a.map(fn).join('; ')}</div>`:'';
+  return `<div class="card"><b>${esc(p.provider)}</b> <span class="note">${esc(p.id)} · ${esc(p.source.kind)} · ${esc(p.created)} · extracted by ${esc(p.extractor.model)} (${esc(p.extractor.total_tokens)} tokens)</span>
+  <div class="wrap"><table><tr><th>Model</th><th>Price</th><th class="n">Old</th><th class="n">New</th><th class="n">Change</th></tr>${rows}</table></div>
+  ${bad(p.unmatched,'Page rows with no catalog model',x=>esc(x.name))}${bad(p.unverified,'Rejected (not found in the page)',x=>esc(x.name))}${bad(p.ambiguous,'Ambiguous (needs a human)',x=>esc(x.name))}
+  <div class="msg">${esc(p.notes.join(' '))}</div>
+  <p><button class="pri" data-a="apply" data-id="${esc(p.id)}">Apply</button> <button data-a="reject" data-id="${esc(p.id)}">Reject</button> <span class="msg" id="a-${esc(p.id)}"></span></p></div>`}).join('')
+  :'<p class="note">Nothing waiting for review.</p>'}
+document.addEventListener('click',async ev=>{const b=ev.target.closest('button[data-a]');if(!b)return;const a=b.dataset.a,p=b.dataset.p,id=b.dataset.id;b.disabled=true;
+ try{
+  if(a==='save'){const u=document.querySelector(`input[data-p="${p}"]`).value;await api('/v1/sources/'+p,'PUT',{url:u});say('m-'+p,'saved','ok')}
+  else if(a==='reset'){await api('/v1/sources/'+p,'PUT',{url:null});await loadPricing()}
+  else if(a==='check'){say('m-'+p,'checking…');const r=await api('/v1/sources/'+p+'/check','POST',{});say('m-'+p,r.state+(r.detail?' ('+r.detail+')':'')+(r.redirected?' · redirected to '+r.final_url:''),r.state==='CHANGED'?'warn':'')}
+  else if(a==='refresh'){say('m-'+p,'reading the page and extracting prices… (this can take a minute)');const r=await api('/v1/pricing/refresh','POST',{provider:p});say('m-'+p,describe(r),r.state==='error'?'warn':'ok');await loadProposals()}
+  else if(a==='apply'||a==='reject'){await api('/v1/pricing/proposals/'+id+'/'+a,'POST',{});await loadProposals()}
+ }catch(e){say(id?('a-'+id):('m-'+p),String(e.message),'warn')}finally{b.disabled=false}});
+$('pbtn').addEventListener('click',async()=>{const b=$('pbtn');b.disabled=true;say('pmsg','extracting…');
+ try{const r=await api('/v1/pricing/refresh','POST',{provider:$('pp').value,text:$('ptxt').value});say('pmsg',describe(r),r.state==='error'?'warn':'ok');await loadProposals()}
+ catch(e){say('pmsg',String(e.message),'warn')}finally{b.disabled=false}});
+show(location.hash.slice(1));
 </script></main></body></html>

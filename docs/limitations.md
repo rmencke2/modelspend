@@ -16,6 +16,8 @@
 
 - **Unpriced models** can run with `allow_unpriced`; their cost is `unknown` and they are ranked by tier then tokens, not cost.
 
+- **Automatic price refresh is LLM-assisted and unverified live.** It is tested with scripted models and a real browser against fake pages, but not yet against the real OpenAI/Google/xAI pages. Verification catches invented numbers, not a hostile page; review before applying (see [pricing-refresh](pricing-refresh.md)).
+
 ## Roadmap
 
 1. Verified catalog snapshots per provider, plus a script that diffs official pricing pages (when reachable) against the catalog.

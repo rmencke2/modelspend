@@ -111,7 +111,7 @@ async def test_timeout_charges_uncertain_tokens_against_token_budget(engine_fact
 async def test_store_and_dashboard_lead_with_tokens(catalog, cfg, store):
     cfg.default_providers = ["xai"]
     eng, _ = make_engine(catalog, cfg, {"xai": lambda r, n: resp("ok", 120, 30)}, store=store)
-    c = TestClient(create_app(eng, cfg))
+    c = TestClient(create_app(eng, cfg), base_url="http://127.0.0.1:8787")
     deny = ["xai/synthetic-xai-small", "xai/synthetic-xai-mid", "xai/synthetic-xai-large"]
     for _ in range(2):
         r = c.post("/v1/chat/completions", json={"model": "auto", "messages": [{"role": "user", "content": "Write a function to add"}],

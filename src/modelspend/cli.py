@@ -35,7 +35,9 @@ app.add_typer(catalog_app, name="catalog")
 app.add_typer(keys_app, name="keys")
 app.add_typer(providers_app, name="providers")
 app.add_typer(models_app, name="models")
+pricing_app = typer.Typer(no_args_is_help=True, help="Refresh prices from the providers' pricing pages: fetch, extract, verify, then review and apply (cron-friendly).")
 app.add_typer(sources_app, name="sources")
+app.add_typer(pricing_app, name="pricing")
 app.add_typer(eval_app, name="eval")
 
 SYNTH_BANNER = "[SYNTHETIC CATALOG: fictional models and prices; never use for real routing]"
@@ -181,7 +183,7 @@ def serve(host: Optional[str] = None, port: Optional[int] = None, catalog: Optio
     eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
     if not eng.adapters:
         typer.echo("warning: no provider API keys found in the environment; requests will have no eligible models", err=True)
-    uvicorn.run(create_app(eng, cfg), host=cfg.host, port=cfg.port, log_level="info")
+    uvicorn.run(create_app(eng, cfg, reload_catalog=lambda: _catalog(cfg, catalog)), host=cfg.host, port=cfg.port, log_level="info")
 
 
 @app.command()
@@ -296,15 +298,7 @@ def catalog_discover(catalog: Optional[str] = CAT,
     asyncio.run(go())
 
 
-def _load_overrides(cfg: Config) -> dict:
-    p = cfg.overrides_path
-    return json.loads(p.read_text()) if p and p.exists() else {}
-
-
-def _save_overrides(cfg: Config, data: dict) -> None:
-    p = cfg.overrides_path
-    p.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
-    p.write_text(json.dumps(data, indent=2, sort_keys=True))  # type: ignore[union-attr]
+from .overrides import apply_assignments, load_overrides as _load_overrides, save_overrides as _save_overrides  # noqa: E402
 
 
 LINE_TIER = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 3, "mythos": 3}
@@ -407,30 +401,11 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
 def catalog_set(ref: str, assignments: list[str] = typer.Argument(..., help="dotted.key=json-value, e.g. tier=2 capabilities.streaming=true pricing.input_per_mtok=3")):
     """Patch one model in overrides.json (validated by reloading the catalog; reverted if invalid)."""
     cfg = Config.from_env()
-    cat = Catalog.from_config(cfg)
-    if ref not in {m.ref for m in cat.models}:
-        typer.echo(f"unknown model '{ref}' (see `modelspend catalog list`)", err=True)
-        raise typer.Exit(2)
-    ov = _load_overrides(cfg)
-    before = json.dumps(ov, sort_keys=True)
-    patch = ov.setdefault("models", {}).setdefault(ref, {})
-    for a in assignments:
-        k, _, v = a.partition("=")
-        try:
-            val = json.loads(v)
-        except json.JSONDecodeError:
-            val = v
-        d = patch
-        *parts, last = k.split(".")
-        for p in parts:
-            d = d.setdefault(p, {})
-        d[last] = val
-    _save_overrides(cfg, ov)
     try:
-        Catalog.from_config(cfg)
-    except Exception as e:  # noqa: BLE001
-        _save_overrides(cfg, json.loads(before))
-        typer.echo(f"invalid change, reverted: {str(e)[:300]}", err=True)
+        apply_assignments(cfg, ref, assignments)
+    except ValueError as e:
+        msg = str(e)
+        typer.echo(f"{msg} (see `modelspend catalog list`)" if msg.startswith("unknown model") else msg, err=True)
         raise typer.Exit(2)
     typer.echo(f"updated {ref} in {cfg.overrides_path}")
 
@@ -799,6 +774,143 @@ def sources_check(provider: Optional[str] = typer.Argument(None),
     if changed:
         typer.echo("\nA page changed: re-verify its prices, update the catalog (`modelspend catalog set ...`), then run `sources check --accept`.")
     raise typer.Exit(1 if changed else 0)
+
+
+# ---------------------------------------------------------------- pricing refresh
+EXIT_PENDING = 10  # `pricing refresh` exit code: at least one proposal is waiting for review (cron can alert on it)
+
+
+def _pricing_engine(cfg: Config, catalog: Optional[str]) -> Engine:
+    return Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
+
+
+def _print_result(r: dict) -> None:
+    ex = r.get("extractor")
+    used = f" [extractor {ex['model']}: {ex['total_tokens']} tokens (in {ex['tokens_in']}, out {ex['tokens_out']}), cost {_usd(ex['cost_usd'])}]" if ex else ""
+    typer.echo(f"{r['provider']:<10}{r['state']:<15}{r.get('detail', '')}{used}")
+    for k, label in (("unmatched", "page rows matching no catalog model"), ("unverified", "rows rejected (numbers/name not found in page)"),
+                     ("ambiguous", "ambiguous rows (same name twice, e.g. tiers)")):
+        if r.get(k):
+            typer.echo(f"          - {r[k]} {label}")
+    if r.get("page_truncated"):
+        typer.echo("          - page text was truncated before extraction: some models may be missing")
+    if r.get("proposal_id"):
+        typer.echo(f"          proposal: {r['proposal_id']}   (modelspend pricing show {r['proposal_id']})")
+
+
+async def _refresh_many(cfg, eng, targets, **kw) -> list[dict]:
+    from .pricing_refresh import refresh_provider
+    return [await refresh_provider(eng, cfg, p, **kw) for p in targets]
+
+
+@pricing_app.command("refresh")
+def pricing_refresh(provider: Optional[str] = typer.Argument(None, help="One provider, or omit for all four."),
+                    auto_apply: bool = typer.Option(False, "--auto-apply", help="Apply without review when every row is verified, only catalog models change, and no change exceeds --max-change-pct."),
+                    max_change_pct: float = typer.Option(50.0, help="Largest price change --auto-apply may apply."),
+                    force: bool = typer.Option(False, help="Re-extract even if the page is unchanged since your baseline."),
+                    providers: Optional[str] = typer.Option(None, help="Which providers' models may run the extraction (default: your enabled providers, else every provider with a key)."),
+                    extractor_model: Optional[str] = typer.Option(None, help="Pin the extractor, e.g. anthropic/claude-haiku-5-5."),
+                    max_tokens: int = typer.Option(80_000, help="Token budget for each extraction call."),
+                    catalog: Optional[str] = CAT):
+    """Fetch pricing pages and propose price updates. A page identical to your accepted baseline costs nothing (no model call).
+    Exit code 0 = nothing to review, 10 = proposals pending review, 1 = an error occurred. Safe to run from cron."""
+    cfg = Config.from_env()
+    eng = _pricing_engine(cfg, catalog)
+    targets = [_prov(provider)] if provider else list(PROVIDERS_ORDER)
+    results = asyncio.run(_refresh_many(cfg, eng, targets, force=force, auto_apply=auto_apply, max_change_pct=max_change_pct,
+                                        providers=[p.strip() for p in providers.split(",")] if providers else None,
+                                        max_tokens=max_tokens, extractor_model=extractor_model))
+    for r in results:
+        _print_result(r)
+    from .pricing_refresh import list_proposals
+    pending = list_proposals(cfg, "pending")
+    if any(r["state"] == "error" for r in results):
+        raise typer.Exit(1)
+    if pending:
+        typer.echo(f"\n{len(pending)} proposal(s) waiting: `modelspend pricing proposals`, then `pricing apply <id>` (or the dashboard's Pricing tab).")
+        raise typer.Exit(EXIT_PENDING)
+
+
+@pricing_app.command("paste")
+def pricing_paste(provider: str, file: Optional[Path] = typer.Option(None, "--file", help="Read the pasted table text from a file (default: standard input)."),
+                  auto_apply: bool = typer.Option(False, "--auto-apply"), max_change_pct: float = 50.0,
+                  providers: Optional[str] = None, extractor_model: Optional[str] = None, catalog: Optional[str] = CAT):
+    """Extract prices from TEXT YOU PASTE (copied from the provider's pricing page), for pages that need JavaScript or block scripts.
+    Same verification as `refresh`: every number must appear in the text you pasted."""
+    cfg = Config.from_env()
+    text = file.read_text() if file else sys.stdin.read()
+    if not text.strip():
+        typer.echo("no text given (paste the table, then press Ctrl-D, or use --file)", err=True)
+        raise typer.Exit(2)
+    eng = _pricing_engine(cfg, catalog)
+    r = asyncio.run(_refresh_many(cfg, eng, [_prov(provider)], text=text, auto_apply=auto_apply, max_change_pct=max_change_pct,
+                                  providers=[p.strip() for p in providers.split(",")] if providers else None, extractor_model=extractor_model))[0]
+    _print_result(r)
+    raise typer.Exit(1 if r["state"] == "error" else (EXIT_PENDING if r["state"] == "proposed" else 0))
+
+
+@pricing_app.command("proposals")
+def pricing_proposals(status: Optional[str] = typer.Option("pending", help="pending | applied | rejected | informational | all")):
+    from .pricing_refresh import list_proposals
+    items = list_proposals(Config.from_env(), None if status == "all" else status)
+    for p in items:
+        n = sum(len(c["fields"]) for c in p["changes"])
+        typer.echo(f"{p['id']:<26}{p['status']:<12}{len(p['changes'])} model(s), {n} price field(s)   [{p['source']['kind']}, {p['created']}]")
+    if not items:
+        typer.echo(f"no {status} proposals")
+
+
+@pricing_app.command("show")
+def pricing_show(proposal_id: str):
+    """Show exactly what a proposal would change (old -> new), and what was rejected or could not be matched."""
+    from .pricing_refresh import get_proposal
+    try:
+        p = get_proposal(Config.from_env(), proposal_id)
+    except KeyError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+    typer.echo(f"{p['id']}  [{p['status']}]  {p['provider']}  source: {p['source']['kind']} {p['source']['url']}")
+    ex = p["extractor"]
+    typer.echo(f"extracted by {ex['model']} using {ex['total_tokens']} tokens\n")
+    for c in p["changes"]:
+        typer.echo(f"  {c['ref']}")
+        for f in c["fields"]:
+            old = "unset" if f["old"] is None else f"${f['old']}"
+            typer.echo(f"      {f['field']:<24}{old:>10} -> ${f['new']}" + (f"   ({f['pct']:+g}%)" if f["pct"] is not None else ""))
+    for k, label in (("unmatched", "No catalog model matches"), ("unverified", "REJECTED (not found in the page text)"), ("ambiguous", "Ambiguous")):
+        for x in p[k]:
+            typer.echo(f"  {label}: {x['name']}" + (f"  ({'; '.join(x['problems'])})" if x.get("problems") else ""))
+    for n in p["notes"]:
+        typer.echo(f"  note: {n}")
+
+
+@pricing_app.command("apply")
+def pricing_apply(proposal_id: Optional[str] = typer.Argument(None), all_: bool = typer.Option(False, "--all", help="Apply every pending proposal.")):
+    """Apply a reviewed proposal: writes the prices to overrides.json (stamped verified today) and accepts the page as your new baseline."""
+    from .pricing_refresh import apply_proposal, list_proposals
+    cfg = Config.from_env()
+    ids = [p["id"] for p in list_proposals(cfg, "pending")] if all_ else ([proposal_id] if proposal_id else [])
+    if not ids:
+        typer.echo("give a proposal id, or --all", err=True)
+        raise typer.Exit(2)
+    for i in ids:
+        try:
+            p = apply_proposal(cfg, i)
+            typer.echo(f"applied {i}: {len(p['changes'])} model(s) updated")
+        except (KeyError, ValueError) as e:
+            typer.echo(f"{i}: {e}", err=True)
+            raise typer.Exit(2)
+
+
+@pricing_app.command("reject")
+def pricing_reject(proposal_id: str):
+    from .pricing_refresh import reject_proposal
+    try:
+        reject_proposal(Config.from_env(), proposal_id)
+    except (KeyError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2)
+    typer.echo(f"rejected {proposal_id} (this version of the page will not be proposed again)")
 
 
 def main() -> None:

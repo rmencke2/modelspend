@@ -14,7 +14,7 @@ def client(catalog, cfg, scripts=None, token=None, store=None):
     cfg.api_token = token
     cfg.default_providers = ["openai", "anthropic"]
     eng, ad = make_engine(catalog, cfg, scripts, store=store)
-    return TestClient(create_app(eng, cfg)), ad, eng
+    return TestClient(create_app(eng, cfg), base_url="http://127.0.0.1:8787"), ad, eng
 
 
 BODY = {"model": "auto", "messages": [{"role": "user", "content": "Classify: great"}]}

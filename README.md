@@ -59,6 +59,18 @@ modelspend status
 - **Pricing links.** Each provider's official pricing page URL lives in one place (`sources.json`), not in the code. Change it with `modelspend sources set <provider> <url>` (tracking parameters such as `utm_source` are stripped), `MODELSPEND_PRICING_URL_<PROVIDER>`, or by editing `~/.modelspend/sources.json`; `sources reset <provider>` restores the shipped link. Catalog prices without their own `source_url` cite the configured page. `modelspend sources check` fetches each page and tells you if it **changed** since your last accepted baseline (it never edits prices: re-verify, update with `catalog set`, then `sources check --accept`).
 - **One-screen overview:** `modelspend status`.
 
+### Keeping prices current (CLI, cron, dashboard)
+
+```bash
+modelspend sources list
+modelspend pricing refresh
+modelspend pricing proposals
+modelspend pricing show PROPOSAL-ID
+modelspend pricing apply PROPOSAL-ID
+```
+
+`pricing refresh` fetches each provider's official pricing page and, **only if it changed since you last accepted it**, uses a cheap model (your own key; a few thousand tokens) to extract prices. Every extracted number must appear on the page next to its model, and the result is a **proposal you review and apply**, never a silent change. Exit code `10` means a review is waiting, so it is safe in cron: `30 7 * * 1 /path/to/.venv/bin/modelspend pricing refresh`. For pages that can't be fetched, `modelspend pricing paste <provider>` takes text you copied. The dashboard's **Pricing** tab does all of this with buttons, including editing each provider's URL. Details and limits: [docs/pricing-refresh.md](docs/pricing-refresh.md).
+
 ### Adding another vendor (OpenAI, Google, xAI)
 
 Prices must come from the provider's **official pricing page** (see `modelspend sources list` for the link). For each model you want:
@@ -144,7 +156,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

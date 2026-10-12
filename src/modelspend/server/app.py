@@ -15,7 +15,11 @@ import hmac
 import json
 import time
 from importlib import resources
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
+
+import asyncio
+import os
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -24,6 +28,8 @@ from pydantic import ValidationError
 from ..config import Config, is_loopback
 from ..engine import Engine
 from ..errors import InvalidRequest, ModelSpendError
+from ..pricing_refresh import apply_proposal, get_proposal, list_proposals, refresh_provider, reject_proposal
+from ..sources import check_source, load_snapshots, resolve_sources, set_user_source
 from ..policy import POLICY_VERSION, PROFILES
 from ..types import RouteRequest, RouteResult, ToolSpec
 
@@ -125,7 +131,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
             "usage": _usage_block(r), "modelspend": r.json_metadata()}
 
 
-def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
+def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
     app = FastAPI(title="ModelSpend", version="0.1.0")
 
@@ -135,6 +141,27 @@ def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
         got = request.headers.get("authorization", "")
         if not got.startswith("Bearer ") or not hmac.compare_digest(got[7:], cfg.api_token):
             raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+
+    loopbacks = {"127.0.0.1", "localhost", "::1"} | {cfg.host} | {h.strip() for h in os.environ.get("MODELSPEND_ALLOWED_HOSTS", "").split(",") if h.strip()}
+
+    async def guard(request: Request) -> None:
+        """Browser-safety for anything that spends money or changes settings. With a bearer token configured this is already
+        covered (browsers never attach it cross-site). Without one the server is local-only, so a web page you visit must not be
+        able to drive it: require JSON content type (forces a CORS preflight), a loopback Host (DNS-rebinding) and a same-origin Origin."""
+        if cfg.api_token:
+            return
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+        host = request.headers.get("host", "")
+        if (urlparse("//" + host).hostname or "") not in loopbacks:
+            raise HTTPException(status_code=403, detail="unexpected Host header (DNS-rebinding protection); add it to MODELSPEND_ALLOWED_HOSTS if intended")
+        origin = request.headers.get("origin")
+        if origin and urlparse(origin).netloc != host:
+            raise HTTPException(status_code=403, detail="cross-origin request refused")
+
+    def _reload() -> None:
+        if reload_catalog is not None:
+            engine.set_catalog(reload_catalog())
 
     @app.exception_handler(HTTPException)
     async def _http(_: Request, e: HTTPException):
@@ -169,7 +196,7 @@ def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
         return {"ok": True, "policy_version": POLICY_VERSION, "catalog_version": engine.catalog.version,
                 "providers_configured": sorted(engine.adapters)}
 
-    @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
+    @app.post("/v1/chat/completions", dependencies=[Depends(auth), Depends(guard)])
     async def chat(request: Request):
         req, stream = to_route_request(await _json(request), cfg)
         if not stream:
@@ -202,13 +229,13 @@ def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
                                                     "partial_text": e.details.get("partial_text")}}) + "\n\n"
         yield "data: [DONE]\n\n"
 
-    @app.post("/v1/route", dependencies=[Depends(auth)])
+    @app.post("/v1/route", dependencies=[Depends(auth), Depends(guard)])
     async def route(request: Request):
         req = RouteRequest(**_with_default_providers(await _json(request), cfg))
         r = await engine.run(req)
         return JSONResponse(json.loads(r.model_dump_json()))
 
-    @app.post("/v1/route/preview", dependencies=[Depends(auth)])
+    @app.post("/v1/route/preview", dependencies=[Depends(auth), Depends(guard)])
     async def preview(request: Request):
         req = RouteRequest(**_with_default_providers(await _json(request), cfg))
         plan = await engine.plan(req)
@@ -228,6 +255,70 @@ def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
     @app.get("/dashboard/data", dependencies=[Depends(auth)])
     async def usage():
         return engine.store.summary() if engine.store else {"totals": {"n": 0}, "recent": []}
+
+    # ---------------- pricing sources and refresh (dashboard "Pricing" tab) ----------------
+    def _sources_view() -> dict:
+        snaps = load_snapshots(cfg)
+        out = []
+        for p, s in resolve_sources(cfg).items():
+            snap = snaps.get(p)
+            out.append({"provider": p, "pricing_url": s.pricing_url, "origin": s.origin,
+                        "baseline_accepted_on": snap["accepted_on"] if snap and snap.get("url") == s.pricing_url else None})
+        return {"providers": sorted(out, key=lambda x: ("anthropic", "openai", "google", "xai").index(x["provider"]))}
+
+    def _provider(name: str) -> str:
+        from ..types import normalize_provider
+        try:
+            return normalize_provider(name)
+        except ValueError as e:
+            raise InvalidRequest(str(e))
+
+    @app.get("/v1/sources", dependencies=[Depends(auth)])
+    async def sources_get():
+        return _sources_view()
+
+    @app.put("/v1/sources/{provider}", dependencies=[Depends(auth), Depends(guard)])
+    async def sources_put(provider: str, request: Request):
+        body = await _json(request)
+        try:
+            set_user_source(cfg, _provider(provider), body.get("url") or None)
+        except ValueError as e:
+            raise InvalidRequest(str(e))
+        return _sources_view()
+
+    @app.post("/v1/sources/{provider}/check", dependencies=[Depends(auth), Depends(guard)])
+    async def sources_check(provider: str, request: Request):
+        body = await _json(request)
+        src = resolve_sources(cfg)[_provider(provider)]
+        return await asyncio.to_thread(check_source, cfg, src, bool(body.get("accept")))
+
+    @app.post("/v1/pricing/refresh", dependencies=[Depends(auth), Depends(guard)])
+    async def pricing_refresh(request: Request):
+        body = await _json(request)
+        r = await refresh_provider(
+            engine, cfg, _provider(body.get("provider", "")), text=body.get("text") or None, force=bool(body.get("force")),
+            auto_apply=bool(body.get("auto_apply")), max_change_pct=float(body.get("max_change_pct", 50)))
+        if r["state"] == "applied":
+            _reload()
+        return r
+
+    @app.get("/v1/pricing/proposals", dependencies=[Depends(auth)])
+    async def proposals(status: str = "pending"):
+        return {"proposals": list_proposals(cfg, None if status == "all" else status)}
+
+    @app.post("/v1/pricing/proposals/{pid}/{action}", dependencies=[Depends(auth), Depends(guard)])
+    async def proposal_action(pid: str, action: str):
+        if action not in ("apply", "reject"):
+            raise HTTPException(status_code=404, detail="unknown action")
+        try:
+            p = (apply_proposal if action == "apply" else reject_proposal)(cfg, pid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        if action == "apply":
+            _reload()
+        return p
 
     @app.get("/", include_in_schema=False)
     async def root():
