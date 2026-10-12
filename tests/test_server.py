@@ -142,3 +142,11 @@ def test_dashboard_and_usage(catalog, cfg, store):
     assert d["totals"]["n"] == 1 and d["by_provider"][0]["provider"] == "openai" and d["validation"]
     assert c.get("/v1/catalog").json()["catalog_version"].startswith("synthetic-1")
     assert "balanced" in c.get("/v1/policy").json()["profiles"]
+
+
+def test_root_redirects_to_dashboard_and_favicon_is_quiet(catalog, cfg):
+    c, _, _ = client(catalog, cfg)
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"] == "/dashboard"
+    assert c.get("/favicon.ico").status_code == 204
+    assert "ModelSpend" in c.get("/").text  # redirect followed by default

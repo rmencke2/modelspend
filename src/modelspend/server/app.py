@@ -18,7 +18,7 @@ from importlib import resources
 from typing import Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from ..config import Config, is_loopback
@@ -228,6 +228,14 @@ def create_app(engine: Engine, cfg: Config | None = None) -> FastAPI:
     @app.get("/dashboard/data", dependencies=[Depends(auth)])
     async def usage():
         return engine.store.summary() if engine.store else {"totals": {"n": 0}, "recent": []}
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return RedirectResponse("/dashboard")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return Response(status_code=204)
 
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard():
