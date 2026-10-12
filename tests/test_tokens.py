@@ -153,8 +153,9 @@ def test_cli_route_prints_tokens_before_cost(monkeypatch, tmp_path):
     r = runner.invoke(app, ["route", "Classify this", "--providers", "openai", "--catalog", "synthetic", "--budget-tokens", "5000"], env=env)
     assert r.exit_code == 0, r.output
     lines = [l for l in r.output.splitlines() if l.startswith("---")]
-    assert lines[1].startswith("--- TOKENS: in 80 | out 12 | total 92") and "token budget left" in lines[1]
-    assert lines[2].startswith("--- cost:")
+    assert lines[1].startswith("--- input tokens: estimated ~") and "vs provider-reported 80" in lines[1]
+    assert lines[2].startswith("--- TOKENS: in 80 | out 12 | total 92") and "token budget left" in lines[2]
+    assert lines[3].startswith("--- cost:")
     u = runner.invoke(app, ["usage"], env=env).output
     assert u.index("TOKENS total 92") < u.index("cost:") and "by model" in u
 
@@ -243,3 +244,19 @@ def test_long_context_tier_cache_write_price(catalog):
     assert small == pytest.approx((1000 * 0.10 + 1000 * 0.125 + 1000 * 0.01 + 1000 * 0.50) / 1e6)
     big = cost_for(m, Usage(input_tokens=60000, cache_write_tokens=30000, cache_read_tokens=20000, output_tokens=1000))
     assert big == pytest.approx((60000 * 0.50 + 30000 * 0.625 + 20000 * 0.05 + 1000 * 2.50) / 1e6)
+
+
+def test_reservation_is_conservative_for_short_claude_prompts():
+    """Regression from the first live call: 87-char prompt estimated ~29 tokens, provider reported 40 input tokens."""
+    from modelspend.tokens import estimate_input_tokens, reservation_input_tokens
+    from modelspend.types import Message
+    msgs = [Message(role="user", content="Classify this ticket as billing, bug or other. Label only. Ticket: I was charged twice.")]
+    est, method = estimate_input_tokens(msgs)
+    assert reservation_input_tokens(est, method) >= 40
+    assert reservation_input_tokens(est, "provider count endpoint") == est  # exact counts need no margin
+
+
+async def test_result_exposes_input_token_estimate(engine_factory):
+    eng, _ = engine_factory({"openai": lambda r, n: resp("positive", 40, 5)})
+    res = await eng.run(R("Classify this", providers=["openai"]))
+    assert res.estimated_input_tokens > 0 and res.usage.input_tokens == 40

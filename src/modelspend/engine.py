@@ -377,6 +377,7 @@ class Engine:
             explanation=expl, estimated_cost_usd=first_estimate,
             actual_cost_usd=round(ledger.spent, 10) if ledger.cost_complete else None,
             uncertain_cost_usd=round(ledger.uncertain, 10), usage=total,
+            estimated_input_tokens=plan.candidates[0].input_tokens_est if plan.candidates else plan.input_tokens,
             total_tokens=ledger.tokens, budget_tokens=req.max_budget_tokens, budget_tokens_remaining=ledger.tokens_remaining,
             attempts=ledger.attempts, retries=counters["retries"],
             failovers=counters["failovers"], escalations=counters["escalations"], validation=report,

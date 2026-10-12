@@ -146,6 +146,10 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
         return
     typer.echo(res.text)
     typer.echo(f"\n--- {res.provider}/{res.model} | {res.status} | validation: {res.validation.status}", err=True)
+    first = next((a for a in res.attempts if a.kind == "generation" and a.outcome == "ok"), None)
+    if first:
+        got = first.usage.input_tokens + first.usage.cache_read_tokens + first.usage.cache_write_tokens
+        typer.echo(f"--- input tokens: estimated ~{res.estimated_input_tokens} vs provider-reported {got} (first attempt)", err=True)
     typer.echo(f"--- TOKENS: {_tok_line(res.usage, res.total_tokens)} (provider-reported, all {len(res.attempts)} attempt(s))"
                + (f" | token budget left {res.budget_tokens_remaining}/{res.budget_tokens}" if res.budget_tokens else ""), err=True)
     typer.echo(f"--- cost: est {_usd(res.estimated_cost_usd)} -> actual {_usd(res.actual_cost_usd)}"

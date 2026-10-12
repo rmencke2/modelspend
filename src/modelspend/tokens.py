@@ -8,7 +8,8 @@ from typing import Any
 from .types import Message, ToolSpec
 
 PER_MESSAGE_OVERHEAD = 4
-APPROX_SAFETY_MARGIN = 1.2  # applied to reservations only when the count is an approximation
+APPROX_SAFETY_MARGIN = 1.35  # reservations only, when the count is an approximation (newer Claude tokenizers use up to ~1.35x chars/4)
+APPROX_FIXED_OVERHEAD = 16  # tokens; short prompts are dominated by per-request formatting overhead (observed live: est 29 vs actual 40)
 
 
 def _tiktoken_count(text: str) -> int | None:
@@ -47,4 +48,4 @@ def estimate_input_tokens(
 
 def reservation_input_tokens(estimate: int, method: str) -> int:
     """Conservative input figure for budget reservation."""
-    return estimate if method.startswith("provider") else math.ceil(estimate * APPROX_SAFETY_MARGIN)
+    return estimate if method.startswith("provider") else math.ceil(estimate * APPROX_SAFETY_MARGIN) + APPROX_FIXED_OVERHEAD

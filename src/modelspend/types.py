@@ -262,6 +262,7 @@ class RouteResult(BaseModel):
         "your provider invoice is authoritative."
     )
     usage: Usage  # token usage summed over ALL attempts (exact, as reported by the providers)
+    estimated_input_tokens: int = 0  # pre-call estimate for the first attempt; compare with usage to see estimate accuracy
     total_tokens: int = 0
     budget_tokens: int | None = None
     budget_tokens_remaining: int | None = None
