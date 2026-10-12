@@ -252,15 +252,22 @@ def catalog_stale(catalog: Optional[str] = CAT, max_age_days: int = 30):
 
 
 @catalog_app.command("discover")
-def catalog_discover(catalog: Optional[str] = CAT):
-    """Compare each provider's live model list with the catalog. Never edits the catalog:
+def catalog_discover(catalog: Optional[str] = CAT,
+                     provider: Optional[str] = typer.Option(None, help="Only this provider."),
+                     only: str = typer.Option("", help="Comma-separated ID substrings to show, e.g. --only gpt-5,o4."),
+                     all_: bool = typer.Option(False, "--all", help="Also show dated snapshot IDs (e.g. gpt-4o-2024-08-06) and lift the display limit.")):
+    """List the model IDs your keys can use and compare them with the catalog. Never edits the catalog:
     discovery gives IDs only, not prices or capabilities, so new IDs must be verified by hand."""
+    import re as _re
     cfg = Config.from_env()
     cat = _catalog(cfg, catalog)
-    adapters = build_adapters(cfg)
+    adapters = {k: v for k, v in build_adapters(cfg).items() if not provider or k == _prov(provider)}
     if not adapters:
         typer.echo("no API keys configured", err=True)
         raise typer.Exit(1)
+    only_l = [o.strip().lower() for o in only.split(",") if o.strip()]
+    snap = _re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{8}|\d{4})$")  # dated snapshot suffixes: -2025-08-07, -20251001, -0613
+    LIMIT = 60
 
     async def go():
         for name, a in adapters.items():
@@ -273,8 +280,19 @@ def catalog_discover(catalog: Optional[str] = CAT):
             typer.echo(f"{name}: {len(live)} models returned by API")
             for i in sorted(known - live):
                 typer.echo(f"  in catalog, NOT in API list (maybe retired/renamed): {i}")
-            for i in sorted(live - known)[:50]:
-                typer.echo(f"  in API, not in catalog (needs verified pricing/capabilities): {i}")
+            new = sorted(live - known)
+            if only_l:
+                new = [i for i in new if any(o in i.lower() for o in only_l)]
+            hidden_snap = [] if all_ else [i for i in new if snap.search(i)]
+            new = [i for i in new if i not in set(hidden_snap)]
+            shown = new if all_ else new[:LIMIT]
+            typer.echo(f"  not in catalog ({len(new)}{' after filter' if only_l else ''}); each needs verified pricing before it can be routed:")
+            for i in shown:
+                typer.echo(f"    {i}")
+            if len(new) > len(shown):
+                typer.echo(f"    ... {len(new) - len(shown)} more not shown: narrow with --only <substring> or use --all")
+            if hidden_snap:
+                typer.echo(f"  ({len(hidden_snap)} dated snapshot IDs hidden; --all shows them. Use the undated alias for routing.)")
     asyncio.run(go())
 
 

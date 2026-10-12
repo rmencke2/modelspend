@@ -239,3 +239,18 @@ def test_full_manual_onboarding_of_a_new_vendor_model(monkeypatch):
     plan = runner.invoke(app, ["preview", "Classify this ticket", "--providers", "openai", "--json"])
     assert json.loads(plan.output[plan.output.index("{"):])["candidates"][0]["model"] == "gpt-test-1"
     assert runner.invoke(app, ["catalog", "price", "openai/missing", "--input", "1", "--output", "2"]).exit_code == 2
+
+
+def test_discover_filters_hides_snapshots_and_never_truncates_silently(monkeypatch):
+    ids = [f"model-{i:03d}" for i in range(80)] + ["gpt-9", "gpt-9-mini", "gpt-9-2026-01-01", "o9-20260101", "gpt-8-0613"]
+    class A(ScriptedAdapter):
+        async def list_models(self):
+            return ids
+    monkeypatch.setattr("modelspend.cli.build_adapters", lambda cfg: {"openai": A("openai", lambda r, n: "x")})
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    full = runner.invoke(app, ["catalog", "discover", "--provider", "openai"]).output
+    assert "more not shown" in full and "3 dated snapshot IDs hidden" in full   # nothing is silently dropped
+    f = runner.invoke(app, ["catalog", "discover", "--provider", "openai", "--only", "gpt-9"]).output
+    assert "gpt-9-mini" in f and "model-000" not in f and "gpt-9-2026-01-01" not in f and "more not shown" not in f
+    every = runner.invoke(app, ["catalog", "discover", "--provider", "openai", "--all"]).output
+    assert "gpt-9-2026-01-01" in every and "model-079" in every and "gpt-8-0613" in every
