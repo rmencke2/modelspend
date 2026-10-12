@@ -115,3 +115,8 @@ def test_allowed_hosts_env_extends_the_host_check(rig, monkeypatch):
     monkeypatch.setenv("MODELSPEND_ALLOWED_HOSTS", "modelspend.lan")
     c = TestClient(create_app(rig.engine, rig.cfg), base_url="http://modelspend.lan:8787")
     assert c.put("/v1/sources/openai", json={"url": None}, headers=H).status_code == 200
+
+
+def test_dashboard_explains_a_stale_server_instead_of_failing_silently(api):
+    html = api.get("/dashboard").text
+    assert "The server process is older than this page" in html and "modelspend serve" in html
