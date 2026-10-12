@@ -59,6 +59,29 @@ modelspend status
 - **Pricing links.** Each provider's official pricing page URL lives in one place (`sources.json`), not in the code. Change it with `modelspend sources set <provider> <url>` (tracking parameters such as `utm_source` are stripped), `MODELSPEND_PRICING_URL_<PROVIDER>`, or by editing `~/.modelspend/sources.json`; `sources reset <provider>` restores the shipped link. Catalog prices without their own `source_url` cite the configured page. `modelspend sources check` fetches each page and tells you if it **changed** since your last accepted baseline (it never edits prices: re-verify, update with `catalog set`, then `sources check --accept`).
 - **One-screen overview:** `modelspend status`.
 
+### Adding another vendor (OpenAI, Google, xAI)
+
+Prices must come from the provider's **official pricing page** (see `modelspend sources list` for the link). For each model you want:
+
+```bash
+modelspend keys set openai
+modelspend keys test openai
+modelspend catalog discover
+modelspend catalog sync --provider openai --add-new --only gpt-5 --assume streaming,tools
+modelspend catalog sync --provider openai --add-new --only gpt-5 --assume streaming,tools --write
+modelspend catalog price openai/MODEL-ID --input 1.25 --output 10 --cached 0.125
+modelspend catalog set openai/MODEL-ID tier=2 limits.context_tokens=400000 limits.max_output_tokens=128000
+modelspend models list --provider openai
+```
+
+(The numbers above are placeholders, not real prices.) Notes:
+
+- `--only` is required with `--add-new` so you don't import every model a key can list (embeddings, audio, image, legacy). Pick the IDs from `catalog discover`.
+- Gemini's model list also returns token limits, so `sync` fills them in. OpenAI's and xAI's lists give IDs only, so set `limits.*` from the provider's model page.
+- `tier` is your honest editorial judgement (1 small/fast, 2 mid, 3 frontier); it is a prior, not a measurement.
+- If the provider reports reasoning tokens separately from output tokens, add `--reasoning-separate` to `catalog price`.
+- `models list` says exactly what is still missing for each model.
+
 ### Using it for real (Anthropic example)
 
 1. **Save your key** (consider a low spend limit in the provider console), then confirm it works:

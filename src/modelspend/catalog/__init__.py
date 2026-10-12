@@ -65,6 +65,12 @@ class Catalog:
         raw_models = {f'{m["provider"]}/{m["id"]}': m for m in raw.get("models", [])}
 
         ov = _read_json(overrides)
+        # add_models first, so `models` patches (catalog set/price/sync) can also edit models the user added
+        for m in ov.get("add_models") or []:
+            ref = f'{m["provider"]}/{m["id"]}'
+            if "pricing" in m:
+                m["pricing"] = {"origin": "user_override", **m["pricing"]}
+            raw_models[ref] = m
         for ref, patch in (ov.get("models") or {}).items():
             if ref not in raw_models:
                 raise ValueError(f"override targets unknown model '{ref}' (use add_models to add one)")
@@ -74,12 +80,6 @@ class Catalog:
             raw_models[ref] = _deep_merge(raw_models[ref], patch)
             if "pricing" in patch and raw_models[ref].get("pricing"):
                 raw_models[ref]["pricing"].setdefault("origin", "user_override")
-        for m in ov.get("add_models") or []:
-            ref = f'{m["provider"]}/{m["id"]}'
-            if "pricing" in m:
-                m["pricing"] = {"origin": "user_override", **m["pricing"]}
-            raw_models[ref] = m
-
         ev = _read_json(evidence)
         for ref, cats in (ev.get("evidence") or {}).items():
             if ref in raw_models:

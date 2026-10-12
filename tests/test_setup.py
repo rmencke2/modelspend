@@ -199,3 +199,43 @@ def test_sources_listed_in_the_same_order_as_providers():
     out = runner.invoke(app, ["sources", "list"]).output
     order = [l.split()[0] for l in out.splitlines() if l and not l.startswith(" ")]
     assert order == ["anthropic", "openai", "google", "xai"]
+
+
+# ---------------------------------------------------------------- adding a new vendor's models
+def _fake_listing(monkeypatch, provider, info):
+    class A(ScriptedAdapter):
+        async def list_model_info(self):
+            return info
+    monkeypatch.setattr("modelspend.cli.build_adapters", lambda cfg: {provider: A(provider, lambda r, n: "ok")})
+    monkeypatch.setenv(f"{ {'openai': 'OPENAI', 'xai': 'XAI', 'google': 'GEMINI'}[provider] }_API_KEY", "k")
+
+
+def test_sync_add_new_requires_only_and_filters(monkeypatch):
+    _fake_listing(monkeypatch, "openai", {"gpt-test-1": {}, "gpt-test-mini": {}, "text-embedding-x": {}, "whisper-y": {}})
+    refuse = runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--write"])
+    assert refuse.exit_code == 2 and "--only" in refuse.output and not (home() / "overrides.json").exists()
+    ok = runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--only", "gpt-test", "--assume", "streaming", "--write"])
+    assert ok.exit_code == 0 and "text-embedding-x" not in ok.output and "whisper-y" not in ok.output
+    ids = {m["id"] for m in json.loads((home() / "overrides.json").read_text())["add_models"]}
+    assert ids == {"gpt-test-1", "gpt-test-mini"}
+
+
+def test_full_manual_onboarding_of_a_new_vendor_model(monkeypatch):
+    """The path someone follows for OpenAI/xAI, whose list endpoints give IDs only."""
+    _fake_listing(monkeypatch, "openai", {"gpt-test-1": {}})
+    runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--only", "gpt-test-1", "--assume", "streaming", "--write"])
+    ref = "openai/gpt-test-1"
+    assert "no pricing" in runner.invoke(app, ["models", "list", "--provider", "openai"]).output
+    r = runner.invoke(app, ["catalog", "price", ref, "--input", "1.25", "--output", "10", "--cached", "0.125", "--reasoning-separate"])
+    assert r.exit_code == 0, r.output
+    m = Catalog.from_config(Config.from_env()).get(ref)
+    assert (m.pricing.input_per_mtok, m.pricing.output_per_mtok, m.pricing.cached_input_per_mtok) == (1.25, 10.0, 0.125)
+    assert m.pricing.reasoning_in_output is False and m.pricing.verified_on is not None
+    assert m.pricing.source_url == "https://developers.openai.com/api/docs/pricing"  # the configured pricing page
+    out = runner.invoke(app, ["models", "list", "--provider", "openai"]).output
+    assert "no pricing" not in out and "limits unknown" in out and "no tier" in out
+    runner.invoke(app, ["catalog", "set", ref, "limits.context_tokens=400000", "limits.max_output_tokens=128000", "tier=2"])
+    assert runner.invoke(app, ["models", "list", "--provider", "openai"]).output.startswith("ROUTABLE")
+    plan = runner.invoke(app, ["preview", "Classify this ticket", "--providers", "openai", "--json"])
+    assert json.loads(plan.output[plan.output.index("{"):])["candidates"][0]["model"] == "gpt-test-1"
+    assert runner.invoke(app, ["catalog", "price", "openai/missing", "--input", "1", "--output", "2"]).exit_code == 2

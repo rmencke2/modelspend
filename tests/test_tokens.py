@@ -201,7 +201,7 @@ def test_cli_sync_then_route_preview_end_to_end(monkeypatch, tmp_path):
     c = plan["candidates"][0]
     assert post.exit_code == 0 and c["model"] == "claude-haiku-5-5" and c["expected_cost_usd"] > 0 and c["expected_total_tokens"] > 0
     # discover the newly-added model too
-    add = runner.invoke(app, ["catalog", "sync", "--provider", "anthropic", "--add-new", "--write"], env=env)
+    add = runner.invoke(app, ["catalog", "sync", "--provider", "anthropic", "--add-new", "--only", "claude-unknown", "--write"], env=env)
     assert "add    anthropic/claude-unknown-x" in add.output
     cat = Catalog.from_config(__import__("modelspend").Config.from_env({**env}))
     assert cat.get("anthropic/claude-unknown-x").pricing is None  # added without prices

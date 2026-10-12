@@ -316,7 +316,8 @@ def sync_patch(ref_known: bool, mid: str, provider: str, info: dict, assume: lis
 @catalog_app.command("sync")
 def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this provider (default: every provider with a key)."),
                  assume: str = typer.Option("", help="Capabilities YOU assert after reading the docs, comma-separated: streaming,tools,temperature."),
-                 add_new: bool = typer.Option(False, help="Also add models that are not in the catalog yet (pricing stays unknown)."),
+                 add_new: bool = typer.Option(False, help="Also add models that are not in the catalog yet (pricing stays unknown). Requires --only."),
+                 only: str = typer.Option("", help="Comma-separated model-ID substrings to include, e.g. --only gpt-5,o4-mini. Needed with --add-new."),
                  write: bool = typer.Option(False, help="Write to overrides.json. Without it this is a dry run."),
                  catalog: Optional[str] = CAT):
     """Fill availability, token limits, structured-output support and a suggested tier from the provider's live model list.
@@ -327,6 +328,11 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
     if not adapters:
         typer.echo("no API keys configured for that provider", err=True)
         raise typer.Exit(1)
+    only_l = [o.strip().lower() for o in only.split(",") if o.strip()]
+    if add_new and not only_l:
+        typer.echo("--add-new needs --only <id substrings> so you don't import every model the API lists "
+                   "(embeddings, audio, image, legacy...). Dry-run `modelspend catalog discover` first to see the IDs.", err=True)
+        raise typer.Exit(2)
     asm = [a.strip() for a in assume.split(",") if a.strip()]
     bad = [a for a in asm if a not in ("streaming", "tools", "tool_calling", "temperature")]
     if bad:
@@ -347,6 +353,8 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
                 ref = f"{name}/{mid}"
                 known = ref in {m.ref for m in cat.models}
                 if not known and not add_new:
+                    continue
+                if only_l and not any(o in mid.lower() for o in only_l):
                     continue
                 has_tier = known and cat.get(ref).tier is not None
                 patch = sync_patch(known, mid, name, i, asm, today, has_tier)
@@ -407,6 +415,28 @@ def catalog_set(ref: str, assignments: list[str] = typer.Argument(..., help="dot
         typer.echo(f"invalid change, reverted: {str(e)[:300]}", err=True)
         raise typer.Exit(2)
     typer.echo(f"updated {ref} in {cfg.overrides_path}")
+
+
+@catalog_app.command("price")
+def catalog_price(ref: str,
+                  input: float = typer.Option(..., "--input", help="USD per 1M input tokens, from the provider's official pricing page."),
+                  output: float = typer.Option(..., "--output", help="USD per 1M output tokens."),
+                  cached: Optional[float] = typer.Option(None, "--cached", help="USD per 1M cached-input (cache read) tokens, if the page lists it."),
+                  cache_write: Optional[float] = typer.Option(None, "--cache-write", help="USD per 1M cache-write tokens, if the page lists it."),
+                  effective_date: Optional[str] = typer.Option(None, "--effective-date", help="yyyy-mm-dd, if the page states one."),
+                  reasoning_separate: bool = typer.Option(False, "--reasoning-separate", help="Provider reports reasoning tokens SEPARATELY from output tokens (billed as output).")):
+    """Set a model's prices in one command. Stamps today as the verification date; the source URL is the provider's configured pricing page."""
+    parts = [f"pricing.input_per_mtok={input}", f"pricing.output_per_mtok={output}", f'pricing.verified_on="{date.today()}"']
+    if cached is not None:
+        parts.append(f"pricing.cached_input_per_mtok={cached}")
+    if cache_write is not None:
+        parts.append(f"pricing.cache_write_per_mtok={cache_write}")
+    if effective_date:
+        parts.append(f'pricing.effective_date="{effective_date}"')
+    if reasoning_separate:
+        parts.append("pricing.reasoning_in_output=false")
+    catalog_set(ref, parts)
+    typer.echo(f"priced {ref}: in ${input}/M, out ${output}/M (verified {date.today()}). Make sure you copied these from the official page.")
 
 
 @catalog_app.command("template")
