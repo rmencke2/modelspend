@@ -14,14 +14,15 @@ from .types import Usage
 M = 1_000_000
 
 
-def _rates(p: Pricing, prompt_tokens: int) -> tuple[float, float, float | None]:
-    inp, out, cached = p.input_per_mtok, p.output_per_mtok, p.cached_input_per_mtok
+def _rates(p: Pricing, prompt_tokens: int) -> tuple[float, float, float | None, float | None]:
+    inp, out, cached, write = p.input_per_mtok, p.output_per_mtok, p.cached_input_per_mtok, p.cache_write_per_mtok
     for t in sorted(p.long_context_tiers, key=lambda t: t.prompt_tokens_over):
         if prompt_tokens > t.prompt_tokens_over:
             inp, out = t.input_per_mtok, t.output_per_mtok
             cached = t.cached_input_per_mtok if t.cached_input_per_mtok is not None else cached
+            write = t.cache_write_per_mtok if t.cache_write_per_mtok is not None else write
     assert inp is not None and out is not None
-    return inp, out, cached
+    return inp, out, cached, write
 
 
 def cost_for(model: Model, usage: Usage) -> float:
@@ -29,9 +30,9 @@ def cost_for(model: Model, usage: Usage) -> float:
     if p is None or not p.known:
         raise ValueError(f"{model.ref} has no known pricing")
     prompt = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
-    inp, out, cached = _rates(p, prompt)
+    inp, out, cached, write = _rates(p, prompt)
     read_rate = cached if cached is not None else inp
-    write_rate = p.cache_write_per_mtok if p.cache_write_per_mtok is not None else inp
+    write_rate = write if write is not None else inp
     return (
         usage.input_tokens * inp
         + usage.cache_read_tokens * read_rate

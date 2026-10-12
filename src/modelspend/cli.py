@@ -58,13 +58,25 @@ def _fail(e: ModelSpendError) -> None:
 CAT = typer.Option(None, "--catalog", help="Catalog JSON path, or 'synthetic' for the fictional test catalog.")
 
 
+def _usd(x: Optional[float]) -> str:
+    return "unknown" if x is None else f"${x:.6f}"
+
+
+def _tok_line(u, total: int) -> str:
+    cached = f" (cached {u.cache_read_tokens})" if u.cache_read_tokens else ""
+    reason = f" (reasoning {u.reasoning_tokens})" if u.reasoning_tokens else ""
+    return f"in {u.input_tokens + u.cache_read_tokens + u.cache_write_tokens}{cached} | out {u.output_tokens}{reason} | total {total}"
+
+
 def _request(prompt: Optional[str], providers: Optional[str], profile: str, budget: Optional[float], max_out: Optional[int],
-             task_type: Optional[str], schema: Optional[Path], system: Optional[str], hard: bool, cfg: Config) -> RouteRequest:
+             task_type: Optional[str], schema: Optional[Path], system: Optional[str], hard: bool, cfg: Config,
+             budget_tokens: Optional[int] = None, allow_unpriced: bool = False) -> RouteRequest:
     if prompt is None or prompt == "-":
         prompt = sys.stdin.read()
     msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     return RouteRequest(
         messages=msgs, providers=_providers(providers, cfg), profile=profile, max_budget_usd=budget, max_output_tokens=max_out,
+        max_budget_tokens=budget_tokens, allow_unpriced=allow_unpriced or cfg.allow_unpriced,
         task_type=TaskCategory(task_type) if task_type else None, hard=hard,
         response_schema=json.loads(schema.read_text()) if schema else None)
 
@@ -74,7 +86,9 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
             providers: Optional[str] = typer.Option(None, help="Comma-separated allowlist, e.g. openai,anthropic."),
             profile: str = "balanced", budget: Optional[float] = typer.Option(None, help="Max total USD for the request."),
             max_output_tokens: Optional[int] = None, task_type: Optional[str] = None, schema: Optional[Path] = None,
-            system: Optional[str] = None, hard: bool = False, assume_keys: bool = typer.Option(False, help="Plan as if keys exist for the allowlisted providers (no calls are made either way)."),
+            system: Optional[str] = None, hard: bool = False, budget_tokens: Optional[int] = typer.Option(None, help="Max TOTAL tokens (input+output) across all attempts."),
+            allow_unpriced: bool = typer.Option(False, help="Include models with no catalog pricing; cost is shown as unknown, tokens still tracked."),
+            assume_keys: bool = typer.Option(False, help="Plan as if keys exist for the allowlisted providers (no calls are made either way)."),
             catalog: Optional[str] = CAT, as_json: bool = typer.Option(False, "--json")):
     """Estimate candidates and costs without making any generation call."""
     cfg = Config.from_env()
@@ -85,7 +99,7 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
     eng = Engine(cat, cfg, {}, None)
     eng.router.available = set(cfg.api_keys)
     try:
-        plan = asyncio.run(eng.plan(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg)))
+        plan = asyncio.run(eng.plan(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced)))
     except ModelSpendError as e:
         plan = e.details.get("plan")
         if plan is None or as_json is False:
@@ -96,9 +110,11 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
         typer.echo(plan.model_dump_json(indent=2))
         return
     typer.echo(plan.explanation + "\n")
-    typer.echo(f"{'#':<3}{'model':<44}{'tier':<5}{'basis':<9}{'est. cost':>12}{'worst case':>13}")
+    typer.echo(f"ranked by: {plan.ranking_basis} | input ~{plan.input_tokens} tokens ({plan.token_method})")
+    typer.echo(f"{'#':<3}{'model':<40}{'tier':<5}{'basis':<9}{'tokens exp/max':>16}{'est. cost':>12}{'worst case':>12}")
     for c in plan.candidates:
-        typer.echo(f"{c.rank:<3}{c.provider + '/' + c.model:<44}{c.tier or '-':<5}{c.suitability_basis:<9}${c.expected_cost_usd:>10.6f} ${c.worst_case_cost_usd:>10.6f}")
+        typer.echo(f"{c.rank:<3}{c.provider + '/' + c.model:<40}{c.tier or '-':<5}{c.suitability_basis:<9}"
+                   f"{str(c.expected_total_tokens) + '/' + str(c.worst_case_total_tokens):>16}{_usd(c.expected_cost_usd):>12}{_usd(c.worst_case_cost_usd):>12}")
     for c in plan.unsuitable:
         typer.echo(f"-  {c.provider + '/' + c.model:<44}{c.tier or '-':<5}{'unsuitable':<9}  {c.suitability_detail}")
     for e in plan.excluded:
@@ -115,12 +131,14 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
           providers: Optional[str] = None, profile: str = "balanced", budget: Optional[float] = None,
           max_output_tokens: Optional[int] = None, task_type: Optional[str] = None, schema: Optional[Path] = None,
           system: Optional[str] = None, hard: bool = False, catalog: Optional[str] = CAT,
+          budget_tokens: Optional[int] = typer.Option(None, help="Max TOTAL tokens (input+output) across all attempts."),
+          allow_unpriced: bool = typer.Option(False, help="Allow models with no catalog pricing; cost is shown as unknown."),
           as_json: bool = typer.Option(False, "--json")):
     """Route a task to a model and run it (spends money with your API keys)."""
     cfg = Config.from_env()
     eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
     try:
-        res = asyncio.run(eng.run(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg)))
+        res = asyncio.run(eng.run(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced)))
     except ModelSpendError as e:
         _fail(e)
     if as_json:
@@ -128,9 +146,11 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
         return
     typer.echo(res.text)
     typer.echo(f"\n--- {res.provider}/{res.model} | {res.status} | validation: {res.validation.status}", err=True)
-    typer.echo(f"--- est ${res.estimated_cost_usd:.6f} -> actual ${res.actual_cost_usd:.6f} (+${res.uncertain_cost_usd:.6f} uncertain) | "
-               f"in {res.usage.input_tokens + res.usage.cache_read_tokens + res.usage.cache_write_tokens} out {res.usage.output_tokens} | "
-               f"retries {res.retries} failovers {res.failovers} escalations {res.escalations}", err=True)
+    typer.echo(f"--- TOKENS: {_tok_line(res.usage, res.total_tokens)} (provider-reported, all {len(res.attempts)} attempt(s))"
+               + (f" | token budget left {res.budget_tokens_remaining}/{res.budget_tokens}" if res.budget_tokens else ""), err=True)
+    typer.echo(f"--- cost: est {_usd(res.estimated_cost_usd)} -> actual {_usd(res.actual_cost_usd)}"
+               + (f" (+{_usd(res.uncertain_cost_usd)} uncertain)" if res.uncertain_cost_usd else "")
+               + f" | retries {res.retries} failovers {res.failovers} escalations {res.escalations}", err=True)
     typer.echo(f"--- {res.explanation}", err=True)
 
 
@@ -155,11 +175,13 @@ def usage(limit: int = 10):
     cfg = Config.from_env()
     s = Store(cfg.db_path).summary(limit)  # type: ignore[arg-type]
     t = s["totals"]
-    typer.echo(f"requests {t['n']} | actual ${t['act']:.6f} | estimated ${t['est']:.6f} | uncertain ${t['unc']:.6f} | escalation rate {s['escalation_rate']*100:.1f}%")
-    for title, rows, key in (("by provider", s["by_provider"], "provider"), ("by task", s["by_task"], "task")):
-        typer.echo(f"\n{title}:")
+    typer.echo(f"requests {t['n']} | TOKENS total {t['total_tokens']} = in {t['input_tokens']} (cached {t['cache_read_tokens']}) + out {t['output_tokens']} (reasoning {t['reasoning_tokens']})")
+    typer.echo(f"cost: actual {_usd(t['act'])} | estimated {_usd(t['est'])} | uncertain {_usd(t['unc'])} | {t['unpriced_requests']} request(s) with unknown cost | escalation rate {s['escalation_rate']*100:.1f}%")
+    for title, rows, key in (("by provider", s["by_provider"], "provider"), ("by task", s["by_task"], "task"), ("by model", s["by_model"], "model")):
+        typer.echo(f"\n{title}:  (requests, input, output tokens | cost)")
         for r in rows:
-            typer.echo(f"  {r[key]:<14}{r['n']:>6}  ${r['cost'] or 0:.6f}")
+            cost = _usd(r["cost"]) if r["cost"] is not None else "unknown"
+            typer.echo(f"  {r[key]:<34}{r['n']:>5} {r['input_tokens']:>10} {r['output_tokens']:>9} tok | {cost}")
 
 
 @app.command()
@@ -239,6 +261,137 @@ def catalog_discover(catalog: Optional[str] = CAT):
             for i in sorted(live - known)[:50]:
                 typer.echo(f"  in API, not in catalog (needs verified pricing/capabilities): {i}")
     asyncio.run(go())
+
+
+def _load_overrides(cfg: Config) -> dict:
+    p = cfg.overrides_path
+    return json.loads(p.read_text()) if p and p.exists() else {}
+
+
+def _save_overrides(cfg: Config, data: dict) -> None:
+    p = cfg.overrides_path
+    p.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+    p.write_text(json.dumps(data, indent=2, sort_keys=True))  # type: ignore[union-attr]
+
+
+LINE_TIER = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 3, "mythos": 3}
+
+
+def sync_patch(ref_known: bool, mid: str, provider: str, info: dict, assume: list[str], today: str, has_tier: bool) -> dict | None:
+    """Build an overrides patch from a provider's list endpoint. Never touches prices."""
+    life = info.get("lifecycle")
+    if life == "retired":
+        return None
+    caps: dict = {"text": True}
+    if info.get("structured_output") is not None:
+        caps["structured_output"] = bool(info["structured_output"])
+    for a in assume:  # explicit user assertions, recorded as such
+        caps[{"streaming": "streaming", "tools": "tool_calling", "tool_calling": "tool_calling", "temperature": "temperature"}[a]] = True
+    patch: dict = {"availability": "deprecated" if life == "deprecated" else "available", "verified_on": today,
+                   "availability_source_url": f"{provider} models API (live, key-scoped) on {today}", "capabilities": caps}
+    lim = {k: v for k, v in (("context_tokens", info.get("context_tokens")), ("max_output_tokens", info.get("max_output_tokens"))) if v}
+    if lim:
+        patch["limits"] = lim
+    if not has_tier and info.get("line") in LINE_TIER:
+        patch["tier"] = LINE_TIER[info["line"]]
+        patch["tier_note"] = f"suggested from the provider's own '{info['line']}' model line; editorial prior, not a measurement"
+    return patch
+
+
+@catalog_app.command("sync")
+def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this provider (default: every provider with a key)."),
+                 assume: str = typer.Option("", help="Capabilities YOU assert after reading the docs, comma-separated: streaming,tools,temperature."),
+                 add_new: bool = typer.Option(False, help="Also add models that are not in the catalog yet (pricing stays unknown)."),
+                 write: bool = typer.Option(False, help="Write to overrides.json. Without it this is a dry run."),
+                 catalog: Optional[str] = CAT):
+    """Fill availability, token limits, structured-output support and a suggested tier from the provider's live model list.
+    Prices are never touched (no provider list endpoint exposes them): set them from the official pricing page."""
+    cfg = Config.from_env()
+    cat = _catalog(cfg, catalog)
+    adapters = {k: v for k, v in build_adapters(cfg).items() if not provider or k == provider}
+    if not adapters:
+        typer.echo("no API keys configured for that provider", err=True)
+        raise typer.Exit(1)
+    asm = [a.strip() for a in assume.split(",") if a.strip()]
+    bad = [a for a in asm if a not in ("streaming", "tools", "tool_calling", "temperature")]
+    if bad:
+        typer.echo(f"--assume accepts streaming,tools,temperature (got {bad})", err=True)
+        raise typer.Exit(2)
+    today = str(date.today())
+    ov = _load_overrides(cfg)
+
+    async def go():
+        n = 0
+        for name, a in adapters.items():
+            try:
+                info = await a.list_model_info()
+            except Exception as e:  # noqa: BLE001
+                typer.echo(f"{name}: sync failed: {e}")
+                continue
+            for mid, i in sorted(info.items()):
+                ref = f"{name}/{mid}"
+                known = ref in {m.ref for m in cat.models}
+                if not known and not add_new:
+                    continue
+                has_tier = known and cat.get(ref).tier is not None
+                patch = sync_patch(known, mid, name, i, asm, today, has_tier)
+                if patch is None:
+                    continue
+                n += 1
+                lim = patch.get("limits", {})
+                typer.echo(f"{'update' if known else 'add   '} {ref:<44} ctx {lim.get('context_tokens', '?')} out {lim.get('max_output_tokens', '?')} "
+                           f"tier {patch.get('tier', 'kept' if has_tier else '?')} {patch['availability']}")
+                if write:
+                    if known:
+                        ov.setdefault("models", {}).setdefault(ref, {})
+                        cur = ov["models"][ref]
+                        cur.update({k: v for k, v in patch.items() if k != "capabilities"})
+                        cur.setdefault("capabilities", {}).update(patch["capabilities"])
+                    else:
+                        ov.setdefault("add_models", [])
+                        ov["add_models"] = [m for m in ov["add_models"] if f"{m['provider']}/{m['id']}" != ref]
+                        ov["add_models"].append({"provider": name, "id": mid, "display_name": i.get("display_name"), **patch})
+        return n
+    n = asyncio.run(go())
+    if write and n:
+        _save_overrides(cfg, ov)
+        typer.echo(f"wrote {n} model(s) to {cfg.overrides_path}")
+    elif n:
+        typer.echo("dry run: add --write to save. Then set what the API cannot tell you (see `modelspend catalog set`).")
+    else:
+        typer.echo("nothing to sync: no catalog models matched the API's list (use --add-new to add unknown ones)")
+
+
+@catalog_app.command("set")
+def catalog_set(ref: str, assignments: list[str] = typer.Argument(..., help="dotted.key=json-value, e.g. tier=2 capabilities.streaming=true pricing.input_per_mtok=3")):
+    """Patch one model in overrides.json (validated by reloading the catalog; reverted if invalid)."""
+    cfg = Config.from_env()
+    cat = Catalog.from_config(cfg)
+    if ref not in {m.ref for m in cat.models}:
+        typer.echo(f"unknown model '{ref}' (see `modelspend catalog list`)", err=True)
+        raise typer.Exit(2)
+    ov = _load_overrides(cfg)
+    before = json.dumps(ov, sort_keys=True)
+    patch = ov.setdefault("models", {}).setdefault(ref, {})
+    for a in assignments:
+        k, _, v = a.partition("=")
+        try:
+            val = json.loads(v)
+        except json.JSONDecodeError:
+            val = v
+        d = patch
+        *parts, last = k.split(".")
+        for p in parts:
+            d = d.setdefault(p, {})
+        d[last] = val
+    _save_overrides(cfg, ov)
+    try:
+        Catalog.from_config(cfg)
+    except Exception as e:  # noqa: BLE001
+        _save_overrides(cfg, json.loads(before))
+        typer.echo(f"invalid change, reverted: {str(e)[:300]}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"updated {ref} in {cfg.overrides_path}")
 
 
 @catalog_app.command("template")

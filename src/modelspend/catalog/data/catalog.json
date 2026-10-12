@@ -1,5 +1,170 @@
 {
-  "catalog_version": "0.1.0-unverified",
-  "description": "Shipped catalog. It intentionally contains NO models: nothing has been verified against official provider documentation, and ModelSpend does not ship unverified IDs, prices or capabilities. Add verified entries via overrides.json; see docs/catalog-verification.md.",
-  "models": []
+  "catalog_version": "0.2.0-anthropic-pricing",
+  "description": "Shipped catalog. Only Anthropic pricing is included, verified on 2026-10-12 against Anthropic's official pricing pages. IDs/availability/limits are unconfirmed until `modelspend catalog sync`; OpenAI, Google and xAI have no entries yet because their official pages have not been verified. See docs/catalog-verification.md.",
+  "models": [
+    {
+      "provider": "anthropic",
+      "id": "claude-haiku-5-5",
+      "display_name": "Claude Haiku 5.5",
+      "availability": "unverified",
+      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "limits": {
+        "context_tokens": null,
+        "max_output_tokens": null
+      },
+      "capabilities": {
+        "text": true,
+        "streaming": null,
+        "structured_output": null,
+        "tool_calling": null,
+        "temperature": null,
+        "reasoning": null
+      },
+      "tier": 1,
+      "tier_note": "editorial prior from Anthropic's model line (haiku=1, sonnet=2, opus/fable=3); not a measurement",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.1,
+        "output_per_mtok": 0.5,
+        "cached_input_per_mtok": 0.01,
+        "cache_write_per_mtok": 0.125,
+        "effective_date": null,
+        "verified_on": "2026-10-12",
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "reasoning_in_output": true,
+        "long_context_tiers": [
+          {
+            "prompt_tokens_over": 100000,
+            "input_per_mtok": 0.5,
+            "output_per_mtok": 2.5,
+            "cached_input_per_mtok": 0.05,
+            "cache_write_per_mtok": 0.625
+          }
+        ],
+        "conditions": [
+          "cache write price is for the 5-minute TTL (1-hour writes cost more)",
+          "Batch API (50% discount), US-only inference (1.1x) and fast mode multipliers are not modelled and not used by ModelSpend",
+          "server-side tools (e.g. web search) have separate per-use charges and are not used by ModelSpend",
+          "prices shown are for prompts up to 100,000 tokens; see long_context_tiers"
+        ]
+      }
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5-5",
+      "display_name": "Claude Sonnet 5.5",
+      "availability": "unverified",
+      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "limits": {
+        "context_tokens": null,
+        "max_output_tokens": null
+      },
+      "capabilities": {
+        "text": true,
+        "streaming": null,
+        "structured_output": null,
+        "tool_calling": null,
+        "temperature": null,
+        "reasoning": null
+      },
+      "tier": 2,
+      "tier_note": "editorial prior from Anthropic's model line (haiku=1, sonnet=2, opus/fable=3); not a measurement",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2.0,
+        "output_per_mtok": 10.0,
+        "cached_input_per_mtok": 0.1,
+        "cache_write_per_mtok": 2.5,
+        "effective_date": null,
+        "verified_on": "2026-10-12",
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "reasoning_in_output": true,
+        "long_context_tiers": [],
+        "conditions": [
+          "cache write price is for the 5-minute TTL (1-hour writes cost more)",
+          "Batch API (50% discount), US-only inference (1.1x) and fast mode multipliers are not modelled and not used by ModelSpend",
+          "server-side tools (e.g. web search) have separate per-use charges and are not used by ModelSpend",
+          "cache reads are 0.05x the base input price"
+        ]
+      }
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-opus-5-5",
+      "display_name": "Claude Opus 5.5",
+      "availability": "unverified",
+      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "limits": {
+        "context_tokens": null,
+        "max_output_tokens": null
+      },
+      "capabilities": {
+        "text": true,
+        "streaming": null,
+        "structured_output": null,
+        "tool_calling": null,
+        "temperature": null,
+        "reasoning": null
+      },
+      "tier": 3,
+      "tier_note": "editorial prior from Anthropic's model line (haiku=1, sonnet=2, opus/fable=3); not a measurement",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 4.0,
+        "output_per_mtok": 20.0,
+        "cached_input_per_mtok": 0.2,
+        "cache_write_per_mtok": 5.0,
+        "effective_date": null,
+        "verified_on": "2026-10-12",
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "reasoning_in_output": true,
+        "long_context_tiers": [],
+        "conditions": [
+          "cache write price is for the 5-minute TTL (1-hour writes cost more)",
+          "Batch API (50% discount), US-only inference (1.1x) and fast mode multipliers are not modelled and not used by ModelSpend",
+          "server-side tools (e.g. web search) have separate per-use charges and are not used by ModelSpend",
+          "cache reads are 0.05x the base input price"
+        ]
+      }
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-fable-5-1",
+      "display_name": "Claude Fable 5.1",
+      "availability": "unverified",
+      "notes": "Pricing verified on the official pages (platform.claude.com/docs/en/about-claude/pricing and claude.com/pricing) on 2026-10-12. The model ID, availability and limits are NOT on those pages: run `modelspend catalog sync` with your key to confirm them from the live Models API. Until then this model is not routable.",
+      "limits": {
+        "context_tokens": null,
+        "max_output_tokens": null
+      },
+      "capabilities": {
+        "text": true,
+        "streaming": null,
+        "structured_output": null,
+        "tool_calling": null,
+        "temperature": null,
+        "reasoning": null
+      },
+      "tier": 3,
+      "tier_note": "editorial prior from Anthropic's model line (haiku=1, sonnet=2, opus/fable=3); not a measurement",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 10.0,
+        "output_per_mtok": 50.0,
+        "cached_input_per_mtok": 0.25,
+        "cache_write_per_mtok": 12.5,
+        "effective_date": null,
+        "verified_on": "2026-10-12",
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+        "reasoning_in_output": true,
+        "long_context_tiers": [],
+        "conditions": [
+          "cache write price is for the 5-minute TTL (1-hour writes cost more)",
+          "Batch API (50% discount), US-only inference (1.1x) and fast mode multipliers are not modelled and not used by ModelSpend",
+          "server-side tools (e.g. web search) have separate per-use charges and are not used by ModelSpend",
+          "cache reads are 0.025x the base input price"
+        ]
+      }
+    }
+  ]
 }

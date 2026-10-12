@@ -143,6 +143,21 @@ class AnthropicAdapter(ProviderAdapter):
             raise classify_exception(self.name, e) from e
         return sorted(m.id for m in page.data)
 
+    async def list_model_info(self) -> dict[str, dict]:
+        try:
+            page = await self._get_client().models.list(limit=100)
+        except Exception as e:  # noqa: BLE001
+            raise classify_exception(self.name, e) from e
+        out: dict[str, dict] = {}
+        for m in page.data:
+            caps = getattr(m, "capabilities", None)
+            so = getattr(getattr(caps, "structured_outputs", None), "supported", None)
+            out[m.id] = {
+                "display_name": getattr(m, "display_name", None), "context_tokens": getattr(m, "max_input_tokens", None),
+                "max_output_tokens": getattr(m, "max_tokens", None), "lifecycle": getattr(m, "lifecycle", None),
+                "line": getattr(m, "line", None), "structured_output": so}
+        return out
+
     async def count_tokens(self, req: ProviderRequest) -> int | None:
         p = self.build_params(req)
         kw = {k: p[k] for k in ("model", "messages", "system", "tools") if k in p}

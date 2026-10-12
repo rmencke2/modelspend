@@ -4,7 +4,8 @@ An open-source router that picks **the lowest-cost AI model expected to suit eac
 
 > **Honest status (v0.1, MVP).**
 > - ModelSpend does **not** guarantee the cheapest successful model. "Suitable" is an *estimate* from catalog tier priors and, as you run evaluations, measured evidence.
-> - **The shipped catalog contains no models.** The build environment could not reach the providers' official documentation, so no ID, price, limit or capability was entered unverified. Until you add verified entries (see [docs/catalog-verification.md](docs/catalog-verification.md)), nothing is eligible for automatic routing. This is deliberate: models with unknown pricing are excluded from cost optimization.
+> - **Only Anthropic pricing ships, and models are not routable until you run `modelspend catalog sync`.** The four Anthropic entries carry prices verified on 2026-10-12 against Anthropic's official pricing pages; their model IDs, availability and limits are confirmed from *your* key's live Models API by `catalog sync`. OpenAI, Google and xAI have no entries yet (their official pages haven't been verified): add them with `catalog template` / `catalog set` ([docs/catalog-verification.md](docs/catalog-verification.md)).
+> - **Tokens first.** Token usage (input, cached, output, reasoning) is exact, provider-reported and summed over every attempt; it is the headline number in the CLI, API and dashboard. Cost is derived from it and shown as `unknown` for models without a price (`--allow-unpriced`). Budgets can be set in tokens (`--budget-tokens`) as well as dollars.
 > - Provider adapters use the official SDKs but have been tested only against **recorded-shape fakes**, not live APIs ([docs/limitations.md](docs/limitations.md)).
 > - Savings figures exist only as measured output of `modelspend eval`; mock runs are labelled **SIMULATED** and are not benchmarks.
 
@@ -40,21 +41,26 @@ Compare premium vs cheapest-eligible vs ModelSpend on simulated data (mechanics 
 modelspend eval run --mode mock --out /tmp/modelspend-report.md
 ```
 
-### Using it for real
+### Using it for real (Anthropic example)
 
-1. **Add verified catalog entries.** `modelspend catalog template openai/<model-id>` prints a skeleton; fill it from the provider's official models and pricing pages and save it in `~/.modelspend/overrides.json` (`add_models`). `modelspend catalog validate` checks it; `modelspend catalog discover` lists IDs your keys can actually see. Details: [docs/catalog-verification.md](docs/catalog-verification.md).
-2. **Set keys and an explicit allowlist** (copy `.env.example`). The allowlist can also be passed per request:
+1. **Set your key** (never paste it anywhere; consider a low spend limit in the provider console):
    ```bash
    export ANTHROPIC_API_KEY=...
-   export OPENAI_API_KEY=...
-   export MODELSPEND_PROVIDERS=anthropic,openai
    ```
-3. **Preview, then route.** `preview` makes no call and spends nothing; `route` makes a real call and prints cost and explanation:
+2. **Confirm models and limits from your key's live Models API** (dry run first, then write). Prices are never touched; the shipped Anthropic prices come from the official pricing pages. `--assume` records capabilities *you* assert after reading the docs:
    ```bash
-   modelspend preview "Summarize: ..." --budget 0.02
-   modelspend route "Summarize: ..." --budget 0.02
+   modelspend catalog sync --provider anthropic
+   modelspend catalog sync --provider anthropic --assume streaming,tools --write
+   modelspend catalog list
    ```
-4. **Serve it** (localhost only unless `MODELSPEND_API_TOKEN` is set). It listens on http://127.0.0.1:8787 with the dashboard at `/dashboard`:
+3. **Preview (no call, no spend), then route.** Output leads with token usage:
+   ```bash
+   modelspend preview "Classify this ticket as billing, bug or other. Label only. Ticket: I was charged twice." --providers anthropic --max-output-tokens 16
+   modelspend route "Classify this ticket as billing, bug or other. Label only. Ticket: I was charged twice." --providers anthropic --max-output-tokens 16 --budget-tokens 2000
+   modelspend usage
+   ```
+4. **Other providers:** `modelspend catalog template openai/<model-id>` prints a skeleton to fill from the official docs; `modelspend catalog set <ref> tier=2 capabilities.streaming=true pricing.input_per_mtok=...` edits one model safely (reverted if invalid). Without a price a model only runs with `--allow-unpriced`, and its cost is reported as unknown while tokens stay exact.
+5. **Serve it** (localhost only unless `MODELSPEND_API_TOKEN` is set). It listens on http://127.0.0.1:8787 with the dashboard at `/dashboard`:
    ```bash
    modelspend serve
    ```

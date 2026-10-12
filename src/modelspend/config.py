@@ -44,6 +44,7 @@ class Config:
     max_pricing_age_days: int = 30
     exclude_stale_pricing: bool = False
     allow_preview_models: bool = False
+    allow_unpriced: bool = False  # run models without catalog pricing (cost reported as unknown)
     default_max_output_tokens: int = 1024
     reasoning_overhead_tokens: int = 1024
     max_retries: int = 2
@@ -92,6 +93,7 @@ class Config:
             max_pricing_age_days=int(e.get("MODELSPEND_MAX_PRICING_AGE_DAYS", 30)),
             exclude_stale_pricing=_bool(e.get("MODELSPEND_EXCLUDE_STALE_PRICING")),
             allow_preview_models=_bool(e.get("MODELSPEND_ALLOW_PREVIEW")),
+            allow_unpriced=_bool(e.get("MODELSPEND_ALLOW_UNPRICED")),
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             host=e.get("MODELSPEND_HOST", "127.0.0.1"),

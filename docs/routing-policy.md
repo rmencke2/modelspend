@@ -29,13 +29,17 @@ With no evidence anywhere, `high_assurance` refuses with an explanation instead 
 
 ## Selection
 
-Among candidates that pass all hard constraints and are suitable, choose the lowest **expected** cost; ties → higher measured lower bound, higher tier, then provider/model name. No success probabilities are fabricated and a model's self-reported confidence is never used.
+Among candidates that pass all hard constraints and are suitable, choose the lowest **expected** cost when every candidate is priced. If *any* candidate has no price (`allow_unpriced`), costs are not comparable, so ranking falls back to **smallest suitable tier, then fewest expected tokens** (`plan.ranking_basis = "tier_then_tokens"`); ties → higher measured lower bound, higher tier, then provider/model name. No success probabilities are fabricated and a model's self-reported confidence is never used.
 
 Expected output tokens are assumptions per category (classification 16, extraction 200, summarization 250, qa 200, code 700, analysis 1000, unknown 400; rewriting/translation scale with the input; capped by `max_output_tokens`; always-on reasoning models add `reasoning_overhead_tokens`, default 1024). The *worst case* used for budget reservation always assumes the output cap. Both are listed in `plan.assumptions`.
 
+## Budgets: dollars and tokens
+
+`max_budget_usd` and `max_budget_tokens` (total input + output across **all** attempts) are independent ceilings; both are enforced before every call using the worst case (output cap plus a margin-adjusted input estimate) and both are tracked after every call from provider-reported usage. A USD budget needs prices, so unpriced models are excluded when one is set; use a token budget for them. Failed calls that may have been billed are charged to both budgets as an upper bound.
+
 ## Hard constraints (never relaxed by suitability)
 
-Allowlisted provider with a configured key · `sensitive` requests only to providers in `MODELSPEND_SENSITIVE_PROVIDERS` · `allow_models`/`deny_models` · availability `available` (preview only if enabled) · pricing known, USD, and (optionally) fresh · limits known · capabilities verified true (structured output, tools, streaming, temperature) · requested output ≤ model max · input + output cap fits context · worst-case cost ≤ remaining budget · observed p50 latency ≤ target when ≥ 5 samples exist (otherwise the latency target is reported as unverified).
+Allowlisted provider with a configured key · `sensitive` requests only to providers in `MODELSPEND_SENSITIVE_PROVIDERS` · `allow_models`/`deny_models` · availability `available` (preview only if enabled) · pricing known (unless `allow_unpriced`), USD, and (optionally) fresh · limits known · capabilities verified true (structured output, tools, streaming, temperature) · requested output ≤ model max · input + output cap fits context · worst-case cost ≤ remaining budget · observed p50 latency ≤ target when ≥ 5 samples exist (otherwise the latency target is reported as unverified).
 
 ## Uncertainty reporting
 

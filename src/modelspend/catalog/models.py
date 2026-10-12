@@ -17,6 +17,7 @@ class PriceTier(BaseModel):
     input_per_mtok: float
     output_per_mtok: float
     cached_input_per_mtok: float | None = None
+    cache_write_per_mtok: float | None = None
 
 
 class Pricing(BaseModel):

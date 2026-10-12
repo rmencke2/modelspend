@@ -115,6 +115,8 @@ class RouteRequest(BaseModel):
     providers: list[str] = Field(default_factory=list)
     profile: Profile = Profile.balanced
     max_budget_usd: float | None = Field(default=None, gt=0)
+    max_budget_tokens: int | None = Field(default=None, gt=0)  # cap on total tokens (input + output) across ALL attempts
+    allow_unpriced: bool = False  # permit models with no catalog pricing; cost is then reported as unknown
     latency_target_ms: int | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, gt=0)
     temperature: float | None = Field(default=None, ge=0)
@@ -169,9 +171,9 @@ class AttemptRecord(BaseModel):
     outcome: str  # ok | operational_error | refused | skipped_budget
     error_kind: str | None = None
     usage: Usage = Field(default_factory=Usage)
-    estimated_cost_usd: float = 0.0
-    cost_usd: float = 0.0
-    cost_basis: Literal["reported_usage", "uncertain_upper_estimate", "none"] = "reported_usage"
+    estimated_cost_usd: float | None = None
+    cost_usd: float | None = 0.0  # None = model has no pricing, cost unknown (tokens are still exact)
+    cost_basis: Literal["reported_usage", "uncertain_upper_estimate", "none", "unpriced"] = "reported_usage"
     latency_ms: int = 0
     note: str | None = None
 
@@ -200,8 +202,10 @@ class Candidate(BaseModel):
     input_tokens_est: int
     expected_output_tokens: int
     worst_case_output_tokens: int
-    expected_cost_usd: float
-    worst_case_cost_usd: float
+    expected_total_tokens: int = 0
+    worst_case_total_tokens: int = 0
+    expected_cost_usd: float | None = None  # None when the model has no pricing
+    worst_case_cost_usd: float | None = None
     pricing_warnings: list[str] = Field(default_factory=list)
     rank: int | None = None
 
@@ -231,6 +235,7 @@ class Plan(BaseModel):
     input_tokens: int
     token_method: str
     escalation_limit: int
+    ranking_basis: str = "expected_cost"  # expected_cost | tier_then_tokens (used whenever any candidate is unpriced)
     assumptions: list[str] = Field(default_factory=list)
     uncertainty: list[str] = Field(default_factory=list)
     catalog_version: str
@@ -249,14 +254,17 @@ class RouteResult(BaseModel):
     task: TaskInfo
     profile: Profile
     explanation: str
-    estimated_cost_usd: float  # pre-call estimate for the first attempt (an estimate, not accounting)
-    actual_cost_usd: float  # computed from provider-reported usage across ALL attempts
+    estimated_cost_usd: float | None  # pre-call estimate for the first attempt (None if unpriced)
+    actual_cost_usd: float | None  # from provider-reported usage across ALL attempts; None if any attempt was unpriced
     uncertain_cost_usd: float = 0.0  # upper-bound charge for failed calls whose billing is unknown
     cost_note: str = (
         "actual_cost_usd is computed from provider-reported token usage and catalog prices; "
         "your provider invoice is authoritative."
     )
-    usage: Usage
+    usage: Usage  # token usage summed over ALL attempts (exact, as reported by the providers)
+    total_tokens: int = 0
+    budget_tokens: int | None = None
+    budget_tokens_remaining: int | None = None
     attempts: list[AttemptRecord]
     retries: int = 0
     failovers: int = 0

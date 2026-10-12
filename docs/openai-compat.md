@@ -22,9 +22,9 @@ Responses use the standard `chat.completion` / `chat.completion.chunk` shapes: `
 
 ## `modelspend` extension
 
-Request (`body["modelspend"]`, via `extra_body` in the OpenAI SDK): `providers` (allowlist; falls back to `MODELSPEND_PROVIDERS`, otherwise 400 `provider_allowlist_required`), `profile`, `task_type`, `hard`, `acceptance_criteria`, `max_budget_usd`, `latency_target_ms`, `validators`, `judge`, `escalation_limit`, `sensitive`, `allow_models`, `deny_models`, `provider_options`. Unknown keys → 400.
+Request (`body["modelspend"]`, via `extra_body` in the OpenAI SDK): `providers` (allowlist; falls back to `MODELSPEND_PROVIDERS`, otherwise 400 `provider_allowlist_required`), `profile`, `task_type`, `hard`, `acceptance_criteria`, `max_budget_usd`, `max_budget_tokens`, `allow_unpriced`, `latency_target_ms`, `validators`, `judge`, `escalation_limit`, `sensitive`, `allow_models`, `deny_models`, `provider_options`. Unknown keys → 400.
 
-Response `modelspend`: `provider`, `model`, `explanation`, `task`, `estimated_cost_usd`, `actual_cost_usd`, `uncertain_cost_usd`, `usage`, `attempts[]` (every call incl. retries/escalations/judge), `retries`, `failovers`, `escalations`, `validation`, `budget_*`, `uncertainty[]`, `catalog_version`, `policy_version`. Streaming: first chunk carries `modelspend.routing`; the last carries full metadata. If a stream fails after output began, an `error` event (`code: stream_interrupted`, `partial_text`) precedes `[DONE]`.
+Response `modelspend`: `provider`, `model`, `explanation`, `task`, `usage` and `total_tokens` (exact, summed over all attempts; also the standard top-level `usage`), `estimated_cost_usd`, `actual_cost_usd` (`null` when any attempt was unpriced), `uncertain_cost_usd`, `budget_tokens_remaining`, `attempts[]` (every call incl. retries/escalations/judge), `retries`, `failovers`, `escalations`, `validation`, `budget_*`, `uncertainty[]`, `catalog_version`, `policy_version`. Streaming: first chunk carries `modelspend.routing`; the last carries full metadata. If a stream fails after output began, an `error` event (`code: stream_interrupted`, `partial_text`) precedes `[DONE]`.
 
 ## Other endpoints
 

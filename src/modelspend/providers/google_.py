@@ -149,6 +149,20 @@ class GoogleAdapter(ProviderAdapter):
         except Exception as e:  # noqa: BLE001
             raise classify_exception(self.name, e) from e
 
+    async def list_model_info(self) -> dict[str, dict]:
+        try:
+            out: dict[str, dict] = {}
+            pager = await self._get_client().aio.models.list()
+            async for m in pager:
+                if "generateContent" not in (getattr(m, "supported_actions", None) or ["generateContent"]):
+                    continue
+                out[m.name.removeprefix("models/")] = {
+                    "display_name": getattr(m, "display_name", None), "context_tokens": getattr(m, "input_token_limit", None),
+                    "max_output_tokens": getattr(m, "output_token_limit", None)}
+            return out
+        except Exception as e:  # noqa: BLE001
+            raise classify_exception(self.name, e) from e
+
     async def count_tokens(self, req: ProviderRequest) -> int | None:
         try:
             call = self.build_call(req)

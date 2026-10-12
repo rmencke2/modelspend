@@ -10,9 +10,18 @@ from modelspend.pricing import cost_for, estimate_cost
 from modelspend.types import Usage
 
 
-def test_shipped_catalog_contains_no_unverified_data():
+def test_shipped_catalog_is_anthropic_pricing_only_and_not_routable_until_synced():
     c = Catalog.load()
-    assert c.models == []  # nothing is shipped until it has been verified against official docs
+    assert {m.provider for m in c.models} == {"anthropic"} and not any(m.synthetic for m in c.models)
+    for m in c.models:
+        assert m.availability == "unverified" and m.limits.context_tokens is None  # IDs/limits unconfirmed until `catalog sync`
+        assert m.pricing.source_url.startswith("https://platform.claude.com/") and m.pricing.verified_on is not None
+        assert m.tier in (1, 2, 3) and "not a measurement" in m.tier_note
+    h = c.get("anthropic/claude-haiku-5-5").pricing  # pinned to the official pricing page fetched 2026-10-12
+    assert (h.input_per_mtok, h.output_per_mtok, h.cached_input_per_mtok, h.cache_write_per_mtok) == (0.10, 0.50, 0.01, 0.125)
+    assert h.long_context_tiers[0].prompt_tokens_over == 100000 and h.long_context_tiers[0].input_per_mtok == 0.50
+    assert [(m.pricing.input_per_mtok, m.pricing.output_per_mtok) for m in c.models if m.id != "claude-haiku-5-5"] == [(2.0, 10.0), (4.0, 20.0), (10.0, 50.0)]
+    assert not [i for i in c.validate() if i.severity == "error"]
     assert all(i.severity != "error" for i in c.validate())
 
 

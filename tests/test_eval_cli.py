@@ -84,7 +84,7 @@ def test_cli_catalog_commands(tmp_path):
     assert runner.invoke(app, ["catalog", "validate", "--catalog", "synthetic"]).exit_code == 0
     r = runner.invoke(app, ["catalog", "list", "--catalog", "synthetic", "--provider", "xai"])
     assert "synthetic-xai-small" in r.stdout
-    assert "catalog 0.1.0-unverified" in runner.invoke(app, ["catalog", "list"]).stdout  # shipped catalog is empty
+    assert "claude-haiku-5-5" in runner.invoke(app, ["catalog", "list"]).stdout  # shipped Anthropic pricing snapshot
     t = runner.invoke(app, ["catalog", "template", "openai/some-model"])
     assert json.loads(t.stdout)["add_models"][0]["pricing"]["input_per_mtok"] is None
     stale = runner.invoke(app, ["catalog", "stale", "--catalog", "synthetic", "--max-age-days", "0"])

@@ -82,6 +82,7 @@ class Router:
         request_id: str | None = None,
         require_streaming: bool = False,
         budget_remaining: float | None = None,
+        tokens_remaining: int | None = None,
     ) -> Plan:
         providers = self.resolve_providers(req)
         validate_provider_options(req)
@@ -100,6 +101,8 @@ class Router:
         last_user_tok = estimate_input_tokens([Message(role="user", content=last_user)])[0]
         cap = req.max_output_tokens or self.cfg.default_max_output_tokens
         budget = req.max_budget_usd if budget_remaining is None else budget_remaining
+        tok_budget = req.max_budget_tokens if tokens_remaining is None else tokens_remaining
+        unpriced_ok = req.allow_unpriced or self.cfg.allow_unpriced
         sens_ok = set(self.cfg.sensitive_providers)
 
         # ---- 2. hard constraints -------------------------------------------------------
@@ -120,11 +123,13 @@ class Router:
                 drop(m, "policy", "in deny_models")
             elif m.availability not in ("available",) and not (m.availability == "preview" and self.cfg.allow_preview_models):
                 drop(m, "availability", f"availability is '{m.availability}'")
-            elif m.pricing is None or not m.pricing.known:
-                drop(m, "pricing", "pricing unknown; excluded from automatic cost optimization")
-            elif m.pricing.currency != "USD":
+            elif (m.pricing is None or not m.pricing.known) and not unpriced_ok:
+                drop(m, "pricing", "pricing unknown; excluded from automatic cost optimization (allow_unpriced=true to run it anyway, with cost reported as unknown)")
+            elif (m.pricing is None or not m.pricing.known) and budget is not None:
+                drop(m, "budget", "a USD budget needs known pricing; use max_budget_tokens for unpriced models")
+            elif m.pricing is not None and m.pricing.known and m.pricing.currency != "USD":
                 drop(m, "pricing", f"price currency {m.pricing.currency} is not USD")
-            elif self.cfg.exclude_stale_pricing and self._stale(m):
+            elif self.cfg.exclude_stale_pricing and m.pricing is not None and m.pricing.known and self._stale(m):
                 drop(m, "pricing", "pricing is stale and MODELSPEND_EXCLUDE_STALE_PRICING is set")
             elif m.limits.context_tokens is None or m.limits.max_output_tokens is None:
                 drop(m, "limits", "context/output limits unknown")
@@ -162,9 +167,14 @@ class Router:
             exp_out = expected_output(cl.category, last_user_tok, out_cap)
             if m.capabilities.reasoning == "always_on":
                 exp_out = min(out_cap, exp_out + self.cfg.reasoning_overhead_tokens)
-            worst = cost_for(m, Usage(input_tokens=reserve_in, output_tokens=out_cap))
-            expct = estimate_cost(m, in_tok, exp_out)
-            if budget is not None and worst > budget + 1e-12:
+            priced = m.pricing is not None and m.pricing.known
+            worst = cost_for(m, Usage(input_tokens=reserve_in, output_tokens=out_cap)) if priced else None
+            expct = estimate_cost(m, in_tok, exp_out) if priced else None
+            worst_tok, exp_tok = reserve_in + out_cap, in_tok + exp_out
+            if tok_budget is not None and worst_tok > tok_budget:
+                drop(m, "budget", f"worst-case {worst_tok} tokens exceeds token budget {tok_budget}")
+                continue
+            if budget is not None and worst is not None and worst > budget + 1e-12:
                 drop(m, "budget", f"worst-case cost ${worst:.6f} exceeds budget ${budget:.6f}")
                 continue
             if self.latency_lookup and req.latency_target_ms:
@@ -177,20 +187,29 @@ class Router:
                 provider=m.provider, model=m.id, tier=m.tier, suitability_basis=s.basis,  # type: ignore[arg-type]
                 suitability_detail=s.detail, evidence_lower_bound=s.lower_bound,
                 input_tokens_est=in_tok, expected_output_tokens=exp_out, worst_case_output_tokens=out_cap,
-                expected_cost_usd=expct, worst_case_cost_usd=worst, pricing_warnings=self._pricing_warnings(m),
+                expected_cost_usd=expct, worst_case_cost_usd=worst, expected_total_tokens=exp_tok,
+                worst_case_total_tokens=worst_tok, pricing_warnings=self._pricing_warnings(m),
             )
             (suitable if s.suitable else unsuitable).append(cand)
 
-        suitable.sort(key=lambda c: (c.expected_cost_usd, -(c.evidence_lower_bound or 0), -(c.tier or 0), c.provider, c.model))
+        # Rank by expected cost when every candidate is priced. If ANY candidate is unpriced, costs are not
+        # comparable, so rank by (smallest suitable tier, fewest expected tokens) - a documented proxy for "cheapest".
+        all_priced = all(c.expected_cost_usd is not None for c in suitable + unsuitable)
+        if all_priced:
+            key = lambda c: (c.expected_cost_usd, -(c.evidence_lower_bound or 0), -(c.tier or 0), c.provider, c.model)  # noqa: E731
+        else:
+            key = lambda c: (c.tier or 9, c.expected_total_tokens, -(c.evidence_lower_bound or 0), c.provider, c.model)  # noqa: E731
+        suitable.sort(key=key)
         for i, c in enumerate(suitable, 1):
             c.rank = i
-        unsuitable.sort(key=lambda c: (c.expected_cost_usd, c.provider, c.model))
+        unsuitable.sort(key=key)
 
         limit = req.escalation_limit if req.escalation_limit is not None else pol.escalation_default
         plan = Plan(
             request_id=request_id or uuid.uuid4().hex[:12], task=task, profile=req.profile,
             candidates=suitable, unsuitable=unsuitable, excluded=excluded, input_tokens=in_tok,
             token_method=method, escalation_limit=limit,
+            ranking_basis="expected_cost" if all_priced else "tier_then_tokens",
             assumptions=self._assumptions(cl.category, cap, method),
             uncertainty=self._uncertainty(req, cl, suitable, method),
             catalog_version=self.catalog.version, policy_version=POLICY_VERSION,
@@ -209,6 +228,8 @@ class Router:
 
     def _pricing_warnings(self, m: Model) -> list[str]:
         w = []
+        if m.pricing is None or not m.pricing.known:
+            return ["no pricing in catalog: cost unknown (token usage is still tracked)"]
         age = pricing_age_days(m, self.today())
         if age is None:
             w.append("pricing verification date unknown")
@@ -249,8 +270,12 @@ class Router:
         if p.candidates:
             c = p.candidates[0]
             parts.append(
-                f"Selected {c.provider}/{c.model}: lowest estimated cost ${c.expected_cost_usd:.6f} "
-                f"(worst case ${c.worst_case_cost_usd:.6f}) among suitable candidates; basis: {c.suitability_basis} - {c.suitability_detail}."
+                (f"Selected {c.provider}/{c.model}: lowest estimated cost ${c.expected_cost_usd:.6f} "
+                 f"(worst case ${c.worst_case_cost_usd:.6f})" if p.ranking_basis == "expected_cost" else
+                 f"Selected {c.provider}/{c.model}: smallest suitable tier, then fewest tokens (pricing unknown for some candidates, "
+                 f"so cost is not used for ranking)")
+                + f"; ~{c.expected_total_tokens} tokens expected, up to {c.worst_case_total_tokens}; "
+                f"basis: {c.suitability_basis} - {c.suitability_detail}."
             )
         else:
             parts.append("No suitable candidate.")

@@ -60,6 +60,10 @@ class ProviderAdapter(ABC):
     async def count_tokens(self, req: ProviderRequest) -> int | None:
         return None
 
+    async def list_model_info(self) -> dict[str, dict]:
+        """id -> whatever metadata the provider's list endpoint exposes (never prices). Default: IDs only."""
+        return {i: {} for i in await self.list_models()}
+
 
 def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     """Map SDK exceptions onto normalized kinds without importing the SDKs here."""
