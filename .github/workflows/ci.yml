@@ -1,0 +1,27 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q                     # all provider calls are mocked; no keys, no network
+      - run: modelspend catalog validate   # shipped catalog must have no errors
+      - run: modelspend catalog validate --catalog synthetic
+      - run: modelspend eval run --mode mock --out /tmp/report.md
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t modelspend:ci .
+      - run: docker run --rm modelspend:ci modelspend policy

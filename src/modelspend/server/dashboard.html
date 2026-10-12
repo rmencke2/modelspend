@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ModelSpend dashboard</title>
+<style>
+:root{--bg:#fff;--fg:#1a1f2b;--mut:#667085;--line:#e4e7ec;--card:#f8f9fb;--a:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f131a;--fg:#e6e9ef;--mut:#98a2b3;--line:#273041;--card:#171d27;--a:#6ea0ff}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:24px 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
+.tile b{display:block;font-size:20px}.tile span{color:var(--mut);font-size:12px}
+table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mut);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:8px;background:var(--a);border-radius:4px;min-width:1px}
+.note{color:var(--mut);font-size:12px}input{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+.wrap{overflow-x:auto}
+</style></head><body><main>
+<h1>ModelSpend</h1>
+<p class="note">Local usage. Spend is <b>computed from provider-reported usage and catalog prices</b> (your invoice is authoritative); "estimated" is the pre-call estimate. No prompts or responses are stored.</p>
+<p id="auth" hidden><input id="tok" type="password" placeholder="API token"> <button onclick="saveTok()">Use</button></p>
+<div class="tiles" id="tiles"></div>
+<h2>Cost by provider</h2><div class="wrap"><table id="prov"></table></div>
+<h2>Cost by task</h2><div class="wrap"><table id="task"></table></div>
+<h2>Selected models</h2><div class="wrap"><table id="model"></table></div>
+<h2>Validation outcomes</h2><div class="wrap"><table id="val"></table></div>
+<h2>Recent requests</h2><div class="wrap"><table id="recent"></table></div>
+<script>
+const $=id=>document.getElementById(id), usd=v=>'$'+(v||0).toFixed(v&&v<0.01?6:4);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function saveTok(){try{sessionStorage.setItem('ms_tok',$('tok').value)}catch(e){};load()}
+function tbl(el,cols,rows,barKey){const mx=Math.max(1e-12,...rows.map(r=>r[barKey]||0));
+ $(el).innerHTML='<tr>'+cols.map(c=>`<th class="${c[2]||''}">${c[0]}</th>`).join('')+(barKey?'<th></th>':'')+'</tr>'+
+ rows.map(r=>'<tr>'+cols.map(c=>`<td class="${c[2]||''}">${esc(c[3]?c[3](r[c[1]],r):r[c[1]])}</td>`).join('')+
+ (barKey?`<td style="width:25%"><div class="bar" style="width:${100*(r[barKey]||0)/mx}%"></div></td>`:'')+'</tr>').join('')||'<tr><td>No data yet</td></tr>'}
+async function load(){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(e){}
+ const r=await fetch('/dashboard/data',{headers:t?{Authorization:'Bearer '+t}:{}});
+ if(r.status==401){$('auth').hidden=false;return}$('auth').hidden=true;const d=await r.json();const T=d.totals||{};
+ $('tiles').innerHTML=[['Requests',T.n||0],['Actual spend',usd(T.act)],['Estimated spend',usd(T.est)],
+  ['Uncertain (failed calls)',usd(T.unc)],['Escalation rate',((d.escalation_rate||0)*100).toFixed(1)+'%'],['Retries / failovers',(T.ret||0)+' / '+(T.fo||0)]]
+  .map(x=>`<div class="tile"><b>${x[1]}</b><span>${x[0]}</span></div>`).join('');
+ tbl('prov',[['Provider','provider'],['Requests','n','n'],['Actual cost','cost','n',usd]],d.by_provider||[],'cost');
+ tbl('task',[['Task','task'],['Requests','n','n'],['Actual cost','cost','n',usd]],d.by_task||[],'cost');
+ tbl('model',[['Provider','provider'],['Model','model'],['Requests','n','n'],['Estimated','est','n',usd],['Actual','cost','n',usd]],d.by_model||[]);
+ tbl('val',[['Validation','validation'],['Requests','n','n']],d.validation||[],'n');
+ tbl('recent',[['Time','ts','',v=>new Date(v*1000).toLocaleTimeString()],['Task','task'],['Model','model'],['Status','status'],['Validation','validation'],
+  ['Esc.','escalations','n'],['Est.','estimated_cost','n',usd],['Actual','actual_cost','n',usd],['ms','latency_ms','n']],d.recent||[]);}
+load();setInterval(load,5000);
+</script></main></body></html>

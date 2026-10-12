@@ -1,0 +1,5 @@
+{
+  "catalog_version": "0.1.0-unverified",
+  "description": "Shipped catalog. It intentionally contains NO models: nothing has been verified against official provider documentation, and ModelSpend does not ship unverified IDs, prices or capabilities. Add verified entries via overrides.json; see docs/catalog-verification.md.",
+  "models": []
+}
