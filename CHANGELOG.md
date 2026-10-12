@@ -10,4 +10,4 @@
   route preview, usage dashboard and a Pricing tab.
 - Catalog with verified Anthropic pricing, `catalog sync` from provider model lists, overrides, and a propose/review/apply price refresh.
 - Evaluation harness with separate calibration and held-out sets; simulated mode for CI.
-- Verified live: Anthropic (sync, routing, escalation, token budgets, streaming, dashboard). OpenAI, Gemini and xAI adapters and the Docker code sandbox are tested against fakes only. See docs/limitations.md.
+- Verified live: Anthropic (sync, routing, escalation, token budgets, streaming, dashboard); OpenAI for non-streaming chat (routing, token counts incl. reasoning tokens, cost). Gemini and xAI adapters, OpenAI streaming/structured output/failover and the Docker code sandbox are tested against fakes only. See docs/limitations.md.
