@@ -172,18 +172,58 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
 
 
 @app.command()
-def serve(host: Optional[str] = None, port: Optional[int] = None, catalog: Optional[str] = CAT):
+def serve(host: Optional[str] = None, port: Optional[int] = None, catalog: Optional[str] = CAT,
+          background: bool = typer.Option(False, "--background", "-d", help="Run detached (log: ~/.modelspend/server.log). Stop it with `modelspend stop`.")):
     """Run the local API server (127.0.0.1 by default; non-loopback requires MODELSPEND_API_TOKEN)."""
     import uvicorn
 
+    from .server import runner
     from .server.app import check_bind, create_app
     cfg = Config.from_env()
     cfg.host, cfg.port = host or cfg.host, port or cfg.port
     check_bind(cfg.host, cfg.api_token)
+    if background:
+        ok, msg = runner.start_background(cfg, host, port, catalog)
+        typer.echo(msg, err=not ok)
+        raise typer.Exit(0 if ok else 1)
+    st = runner.server_state(cfg)
+    if st.running:
+        typer.echo(f"a ModelSpend server is already running (pid {st.pid}) on port {st.port}. Stop it with `modelspend stop`, or use `modelspend restart`.", err=True)
+        raise typer.Exit(1)
     eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
     if not eng.adapters:
         typer.echo("warning: no provider API keys found in the environment; requests will have no eligible models", err=True)
-    uvicorn.run(create_app(eng, cfg, reload_catalog=lambda: _catalog(cfg, catalog)), host=cfg.host, port=cfg.port, log_level="info")
+    runner.write_pidfile(cfg, cfg.host, cfg.port)
+    try:
+        uvicorn.run(create_app(eng, cfg, reload_catalog=lambda: _catalog(cfg, catalog)), host=cfg.host, port=cfg.port, log_level="info")
+    finally:
+        runner.remove_pidfile(cfg, only_if_pid=os.getpid())
+
+
+@app.command()
+def stop(timeout: float = typer.Option(10.0, help="Seconds to wait for a graceful shutdown."),
+         force: bool = typer.Option(False, "--force", help="Kill it if it has not exited after the timeout (or if the PID file looks stale).")):
+    """Stop the local ModelSpend server (started with `serve`, `serve --background`, or by an older version)."""
+    from .server import runner
+    ok, msg = runner.stop_server(Config.from_env(), timeout=timeout, force=force)
+    typer.echo(msg, err=not ok)
+    raise typer.Exit(0 if ok else 1)
+
+
+@app.command()
+def restart(host: Optional[str] = None, port: Optional[int] = None, catalog: Optional[str] = CAT):
+    """Stop the server (if running) and start it again in the background, e.g. after `git pull`."""
+    from .server import runner
+    cfg = Config.from_env()
+    cfg.host, cfg.port = host or cfg.host, port or cfg.port
+    ok, msg = runner.stop_server(cfg)
+    if not ok:
+        typer.echo(msg, err=True)
+        raise typer.Exit(1)
+    typer.echo(msg)
+    ok, msg = runner.start_background(cfg, host, port, catalog)
+    typer.echo(msg, err=not ok)
+    raise typer.Exit(0 if ok else 1)
 
 
 @app.command()
@@ -712,6 +752,10 @@ def status(catalog: Optional[str] = CAT):
     cfg = Config.from_env()
     cat = _catalog(cfg, catalog)
     typer.echo(f"home: {cfg.home}   catalog {cat.version}   policy {POLICY_VERSION}")
+    from .server import runner
+    st = runner.server_state(cfg)
+    typer.echo(f"server: running (pid {st.pid or '?'}) at http://{runner.probe_host(st.host or cfg.host)}:{st.port}  [modelspend stop]" if st.running
+               else "server: not running  [modelspend serve --background]")
     typer.echo("\nproviders:")
     providers_list(catalog)
     routable = [m for m in cat.models if not routability(m, cfg)]

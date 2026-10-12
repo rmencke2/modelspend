@@ -59,6 +59,17 @@ modelspend status
 - **Pricing links.** Each provider's official pricing page URL lives in one place (`sources.json`), not in the code. Change it with `modelspend sources set <provider> <url>` (tracking parameters such as `utm_source` are stripped), `MODELSPEND_PRICING_URL_<PROVIDER>`, or by editing `~/.modelspend/sources.json`; `sources reset <provider>` restores the shipped link. Catalog prices without their own `source_url` cite the configured page. `modelspend sources check` fetches each page and tells you if it **changed** since your last accepted baseline (it never edits prices: re-verify, update with `catalog set`, then `sources check --accept`).
 - **One-screen overview:** `modelspend status`.
 
+### Running the server
+
+```bash
+modelspend serve --background
+modelspend status
+modelspend restart
+modelspend stop
+```
+
+`serve` runs in the foreground (Ctrl-C stops it). `serve --background` (or `-d`) runs it detached, logging to `~/.modelspend/server.log`; `restart` is the thing to run after `git pull`; `stop` shuts it down gracefully. Only one server runs at a time. `stop` finds the server through a PID file and **only signals a process that actually answers like a ModelSpend server**, so a reused PID is never killed; add `--force` to override. A server started by an older version (no PID file) is found by its port (needs `lsof` on macOS/Linux).
+
 ### Keeping prices current (CLI, cron, dashboard)
 
 ```bash

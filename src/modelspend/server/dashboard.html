@@ -90,7 +90,7 @@ async function loadPricing(){
    <td>${p.baseline_accepted_on?esc(p.baseline_accepted_on):'<span class="note">none</span>'}</td>
    <td style="white-space:nowrap"><button data-a="save" data-p="${esc(p.provider)}">Save</button> <button data-a="reset" data-p="${esc(p.provider)}">Reset</button>
    <button data-a="check" data-p="${esc(p.provider)}">Check</button> <button class="pri" data-a="refresh" data-p="${esc(p.provider)}">Refresh prices</button></td></tr>`).join('')}catch(e){const old=/not found/i.test(e.message);
-  $('srcs').innerHTML='<tr><td class="warn">Could not load the pricing pages ('+esc(e.message)+').'+(old?' <b>The server process is older than this page.</b> Stop it (Ctrl-C in its terminal) and run <code>modelspend serve</code> again, then reload.':'')+'</td></tr>'}
+  $('srcs').innerHTML='<tr><td class="warn">Could not load the pricing pages ('+esc(e.message)+').'+(old?' <b>The server process is older than this page.</b> Run <code>modelspend restart</code> (or stop it and run <code>modelspend serve</code> again), then reload.':'')+'</td></tr>'}
  loadProposals()}
 async function loadProposals(){
  let d;try{d=await api('/v1/pricing/proposals')}catch(e){return}
