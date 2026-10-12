@@ -12,7 +12,8 @@ An open-source router that picks **the lowest-cost AI model expected to suit eac
 
 ```bash
 git clone https://github.com/rmencke2/modelspend.git && cd modelspend
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # needs Python 3.10+ (check: python --version)
+python -m pip install --upgrade pip                  # old pip (e.g. 21.x) cannot do editable installs from pyproject.toml
 pip install -e ".[dev]"
 
 pytest -q                                     # 120+ tests, all mocked
