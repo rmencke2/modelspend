@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modelspend"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Open-source router that selects the lowest-cost AI model expected to suit each task, using your own API keys."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 keywords = ["llm", "router", "cost", "tokens", "openai", "anthropic", "gemini", "grok"]
 classifiers = [
+  "Development Status :: 4 - Beta",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Intended Audience :: Developers",
