@@ -15,6 +15,7 @@ import json
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from .budgets import BudgetGuard, PeriodBudgetExceeded, Violation
 from .catalog import Catalog
 from .catalog.models import Model
 from .config import Config
@@ -54,6 +55,8 @@ class Ledger:
         self.uncertain_tokens = 0  # input-token upper bound for failed calls that may have been billed
         self.cost_complete = True  # False once any generation attempt had no pricing
         self.attempts: list[AttemptRecord] = []
+        self.guard: BudgetGuard | None = None  # persistent per-project/agent budgets (see budgets.py)
+        self.refusal: Violation | None = None  # set when a hard budget stopped a call
 
     @property
     def used(self) -> float:
@@ -88,6 +91,8 @@ class Ledger:
             self.uncertain += a.cost_usd or 0.0
         elif a.cost_basis == "unpriced" and a.outcome != "skipped_budget":
             self.cost_complete = False
+        if self.guard is not None:
+            self.guard.settle(self.used, self.tokens_used)  # the in-flight hold shrinks to what was really spent
         return a
 
 
@@ -184,6 +189,18 @@ class Engine:
             reasoning_in_output=model.pricing.reasoning_in_output if model.pricing else True,
         )
 
+    def _gate(self, ledger: Ledger, cand: Candidate, kind: str, purpose: str) -> bool:
+        """Persistent per-project/agent budgets: reserve the worst case of the next call, or record why it cannot run."""
+        if ledger.guard is None:
+            return True
+        v = ledger.guard.reserve(cand.worst_case_cost_usd, cand.worst_case_total_tokens, ledger.used, ledger.tokens_used)
+        if v is None:
+            return True
+        ledger.refusal = v
+        ledger.add(AttemptRecord(index=0, kind=kind, purpose=purpose, provider=cand.provider, model=cand.model,  # type: ignore[arg-type]
+                                 outcome="skipped_budget", cost_basis="none", note=v.message[:300]))
+        return False
+
     async def _call(self, req: RouteRequest, cand: Candidate, purpose: str, ledger: Ledger, kind: str = "generation") -> ProviderResponse | None:
         """Reserve, call, account. Returns None (and records a skip) if the budget cannot cover it."""
         model = self.catalog.get(f"{cand.provider}/{cand.model}")
@@ -193,6 +210,8 @@ class Engine:
                                      note=f"worst case ${cand.worst_case_cost_usd or 0:.6f} / {cand.worst_case_total_tokens} tokens "
                                           f"exceeds remaining ${ledger.remaining if ledger.remaining is not None else float('inf'):.6f} / "
                                           f"{ledger.tokens_remaining if ledger.tokens_remaining is not None else 'unlimited'} tokens"))
+            return None
+        if not self._gate(ledger, cand, kind, purpose):
             return None
         adapter = self.adapters[cand.provider]
         preq = self._provider_request(req, model, cand)
@@ -295,8 +314,16 @@ class Engine:
 
     # ================================================================ run
     async def run(self, req: RouteRequest) -> RouteResult:
-        t0 = time.monotonic()
         ledger = Ledger(req.max_budget_usd, req.max_budget_tokens)
+        ledger.guard = BudgetGuard.for_request(self.store, req)
+        try:
+            return await self._run(req, ledger)
+        finally:
+            if ledger.guard is not None:
+                ledger.guard.close()  # the request's calls are recorded by now; drop its in-flight hold
+
+    async def _run(self, req: RouteRequest, ledger: Ledger) -> RouteResult:
+        t0 = time.monotonic()
         counters = {"retries": 0, "failovers": 0, "escalations": 0}
         plan = await self.plan(req, ledger=ledger)
         await self._refine_exact(req, plan)
@@ -327,8 +354,13 @@ class Engine:
                     continue
                 if resp is None:
                     if last is None:
+                        if ledger.refusal is not None:
+                            raise ledger.refusal.error()
                         raise BudgetTooLow("remaining budget cannot cover any candidate", attempts=ledger.attempts, plan=plan)
-                    notes.append("budget exhausted; escalation not attempted")
+                    notes.append(ledger.refusal.message if ledger.refusal is not None else "budget exhausted; escalation not attempted")
+                    if purpose == "escalation":  # it never ran: the earlier answer stands, and it failed validation
+                        counters["escalations"] -= 1
+                        status = "validation_failed"
                     break
                 last = (cur, resp)
                 if resp.finish_reason == "content_filter":
@@ -393,7 +425,8 @@ class Engine:
             budget_usd=req.max_budget_usd, budget_remaining_usd=ledger.remaining, uncertainty=unc,
             catalog_version=plan.catalog_version, policy_version=plan.policy_version,
             latency_ms=int((time.monotonic() - t0) * 1000),
-            project=req.project, agent=req.agent, run_id=req.run_id, labels=dict(req.labels), pinned=req.pin is not None)
+            project=req.project, agent=req.agent, run_id=req.run_id, labels=dict(req.labels), pinned=req.pin is not None,
+            budget_warnings=list(ledger.guard.warnings) if ledger.guard is not None else [])
 
     def _record_failure(self, plan: Plan, ledger: Ledger, est: float, req: RouteRequest, t0: float, code: str) -> None:
         if self.store:
@@ -420,13 +453,26 @@ class Engine:
         shown to the caller). After the first chunk: no replacement; failure raises StreamInterrupted.
         Quality escalation is not performed on streams; validation status is reported in `done`.
         """
-        t0 = time.monotonic()
         ledger = Ledger(req.max_budget_usd, req.max_budget_tokens)
+        ledger.guard = BudgetGuard.for_request(self.store, req)
+        try:
+            async for ev in self._stream(req, ledger):
+                yield ev
+        finally:
+            if ledger.guard is not None:
+                ledger.guard.close()
+
+    async def _stream(self, req: RouteRequest, ledger: Ledger) -> AsyncIterator[StreamEvent]:
+        t0 = time.monotonic()
         counters = {"retries": 0, "failovers": 0, "escalations": 0}
         plan = await self.plan(req, require_streaming=True, ledger=ledger)
         cur = plan.candidates[0]
         first_estimate = cur.expected_cost_usd
         tried = {f"{cur.provider}/{cur.model}"}
+        if not self._gate(ledger, cur, "generation", "initial"):  # before the route event: refusals surface as proper HTTP errors
+            self._record_failure(plan, ledger, first_estimate, req, t0, PeriodBudgetExceeded.code)
+            raise ledger.refusal.error()  # type: ignore[union-attr]
+        gated = True
         yield StreamEvent(type="route", plan=plan)
         emitted: list[str] = []
         purpose, attempt_no = "initial", 0
@@ -436,6 +482,11 @@ class Engine:
             if not ledger.can_afford(cur.worst_case_cost_usd, cur.worst_case_total_tokens):
                 self._record_failure(plan, ledger, first_estimate, req, t0, "budget_too_low")
                 raise BudgetTooLow("remaining budget cannot cover the stream", plan=plan)
+            if gated:
+                gated = False  # the first attempt was reserved above
+            elif not self._gate(ledger, cur, "generation", purpose):
+                self._record_failure(plan, ledger, first_estimate, req, t0, PeriodBudgetExceeded.code)
+                raise ledger.refusal.error()  # type: ignore[union-attr]
             t_call = time.monotonic()
             try:
                 async for ev in self.adapters[cur.provider].stream(self._provider_request(req, model, cur)):

@@ -17,6 +17,7 @@
 - **Unpriced models** can run with `allow_unpriced`; their cost is `unknown` and they are ranked by tier then tokens, not cost.
 
 - **Automatic price refresh is LLM-assisted and unverified live.** It is tested with scripted models and a real browser against fake pages, but not yet against the real OpenAI/Google/xAI pages. Verification catches invented numbers, not a hostile page; review before applying (see [pricing-refresh](pricing-refresh.md)).
+- **Budgets (0.3) are single-machine.** Enforcement relies on SQLite write transactions shared by the processes using one usage database; it is tested with threads and separate connections, not across machines or network file systems. Windows are UTC. USD limits count only priced calls. Not yet exercised against live providers.
 
 ## Roadmap
 
@@ -25,4 +26,4 @@
 3. Provider token-count endpoints in planning; prompt-cache aware estimates when callers opt into caching.
 4. Larger, versioned calibration/held-out sets; per-user evidence dashboards.
 5. Batch-API routing; multimodal inputs with explicit capability matrix; multi-turn tool-loop helpers (caller-driven).
-6. Pluggable classifier and policy modules; per-key budgets and quotas.
+6. Pluggable classifier and policy modules; budget alerts and notifications; provider usage import and reconciliation.

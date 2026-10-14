@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0b1 - unreleased
+
+- **Dashboard Costs tab.** Hero token count, cost, overhead, cache hit rate and unpriced-call tiles; tokens by project / agent / model /
+  provider / task / purpose as stacked bars (input, cached, output); tokens per day; a details table; one filter row (window, group by,
+  project) that scopes everything. Light and dark, keyboard and tooltip support, a table-view twin for every chart.
+- **Persistent budgets per project and/or agent** (`modelspend budget set|list|remove`, `GET/PUT /v1/budgets`, `DELETE /v1/budgets/{id}`,
+  dashboard form): daily or monthly (UTC) limits in USD and/or tokens, **hard** (the call is refused before anything is sent; HTTP 429
+  `period_budget_exceeded`) or **soft** (a warning on the result). Checked before every provider call, including retries, failovers,
+  escalations, classifier and judge calls and streams, in one SQLite write transaction so concurrent threads and processes sharing the
+  database cannot jointly overshoot. In-flight calls hold their worst case; crashed holds expire after 15 minutes.
+- `modelspend prune <age> --yes` deletes old usage records (budgets and settings are kept).
+- The usage database now uses WAL mode so reports never block writers.
+- Fix: when an escalation could not run because of a budget, the earlier answer is now returned as `validation_failed` with
+  `escalations: 0` (it used to be reported as `ok`).
+- Not yet verified against live providers; the concurrency guarantee is tested with threads on one machine, not across machines or network file systems.
+
 ## 0.2.0b1 - unreleased
 
 - **Cost attribution.** Optional `project`, `agent`, `run_id` and `labels` tags on every call (SDK, CLI flags, `MODELSPEND_PROJECT` / `MODELSPEND_AGENT`,

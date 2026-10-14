@@ -31,6 +31,8 @@ keys_app = typer.Typer(no_args_is_help=True, help="Set, list, test and remove AP
 providers_app = typer.Typer(no_args_is_help=True, help="Choose which providers ModelSpend may use by default.")
 models_app = typer.Typer(no_args_is_help=True, help="See which models are routable and turn individual models on or off.")
 sources_app = typer.Typer(no_args_is_help=True, help="Where each provider's official pricing page lives (change it if a URL moves).")
+budget_app = typer.Typer(no_args_is_help=True, help="Spending limits per project and/or agent (daily or monthly, in USD and/or tokens).")
+app.add_typer(budget_app, name="budget")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(keys_app, name="keys")
 app.add_typer(providers_app, name="providers")
@@ -203,6 +205,8 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
     typer.echo(f"--- cost: est {_usd(res.estimated_cost_usd)} -> actual {_usd(res.actual_cost_usd)}"
                + (f" (+{_usd(res.uncertain_cost_usd)} uncertain)" if res.uncertain_cost_usd else "")
                + f" | retries {res.retries} failovers {res.failovers} escalations {res.escalations}", err=True)
+    for w in res.budget_warnings:
+        typer.echo(f"--- BUDGET: {w}", err=True)
     typer.echo(f"--- {res.explanation}", err=True)
 
 
@@ -300,6 +304,82 @@ def report(by: str = typer.Option("project,agent,model", "--by", help="Group by 
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
     typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_csv(rep) if fmt == "csv" else to_table(rep))
+
+
+# ---------------------------------------------------------------- budgets and retention
+def _store() -> Store:
+    return Store(Config.from_env().db_path)  # type: ignore[arg-type]
+
+
+def _pct(p: Optional[float]) -> str:
+    return "-" if p is None else f"{p:.0%}"
+
+
+@budget_app.command("set")
+def budget_set(project: Optional[str] = typer.Option(None, help="Limit this project (omit for any project)."),
+               agent: Optional[str] = typer.Option(None, help="Limit this agent (omit for any agent)."),
+               period: str = typer.Option("monthly", help="daily or monthly (UTC calendar day / month)."),
+               usd: Optional[float] = typer.Option(None, help="Limit in US dollars (counts only calls on models with a price)."),
+               tokens: Optional[int] = typer.Option(None, help="Limit in total tokens (input + output, all calls)."),
+               mode: str = typer.Option("hard", help="hard: refuse calls that would exceed it. soft: only warn.")):
+    """Create or replace a budget. Needs --usd and/or --tokens. With neither --project nor --agent it covers everything."""
+    from .budgets import set_budget
+    try:
+        b = set_budget(_store(), project=project, agent=agent, period=period, limit_usd=usd, limit_tokens=tokens, mode=mode)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    lim = " and ".join(x for x in (f"${b.limit_usd:,.2f}" if b.limit_usd is not None else "", f"{b.limit_tokens:,} tokens" if b.limit_tokens is not None else "") if x)
+    typer.echo(f"budget #{b.id}: {b.period} {b.mode} limit {lim} for {b.label}")
+
+
+@budget_app.command("list")
+def budget_list(as_json: bool = typer.Option(False, "--json")):
+    """Show every budget with what has been spent in its current window."""
+    from .budgets import status
+    rows = status(_store())
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        typer.echo("no budgets set. Example: modelspend budget set --project shop --period monthly --usd 50")
+        return
+    for r in rows:
+        spent = []
+        if r["limit_usd"] is not None:
+            spent.append(f"${r['spent_usd']:,.4f} of ${r['limit_usd']:,.2f} ({_pct(r['pct_usd'])}{'' if r['usd_complete'] else ', partial: some calls unpriced'})")
+        if r["limit_tokens"] is not None:
+            spent.append(f"{r['spent_tokens']:,} of {r['limit_tokens']:,} tokens ({_pct(r['pct_tokens'])})")
+        flag = {"ok": "ok     ", "warning": "WARNING", "over": "OVER   "}[r["state"]]
+        typer.echo(f"#{r['id']:<3} {flag} {r['period']:<8} {r['mode']:<5} {r['scope']:<42} {' | '.join(spent)} | resets {r['resets_at_text']}")
+
+
+@budget_app.command("remove")
+def budget_remove(budget_id: int):
+    """Delete a budget by its number (see `budget list`)."""
+    from .budgets import remove_budget
+    if not remove_budget(_store(), budget_id):
+        typer.echo(f"no budget #{budget_id}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"removed budget #{budget_id}")
+
+
+@app.command()
+def prune(older_than: str = typer.Argument(..., help="Delete usage recorded before this: 90d, 12w, or a date like 2026-07-01."),
+          yes: bool = typer.Option(False, "--yes", help="Actually delete. Without it, only report what would be deleted.")):
+    """Delete old usage records (requests and their attempts). Budgets and settings are kept. Reports are computed from what remains."""
+    from .report import ReportError, parse_since
+    try:
+        cutoff = parse_since(older_than)
+    except ReportError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    if cutoff is None:
+        typer.echo("error: give a cutoff such as 90d or 2026-07-01 ('all' is not accepted here)", err=True)
+        raise typer.Exit(2)
+    n = _store().prune(cutoff, dry_run=not yes)
+    typer.echo(f"{'deleted' if yes else 'would delete'} {n['requests']} request(s) and {n['attempts']} attempt(s) older than {older_than}"
+               + ("" if yes else "  (add --yes to delete)"))
 
 
 @app.command()

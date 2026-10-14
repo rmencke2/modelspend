@@ -23,12 +23,44 @@ button.pri{background:var(--a);color:#fff;border-color:var(--a)}button:disabled{
 input.url{width:100%;min-width:260px;box-sizing:border-box}textarea{width:100%;min-height:120px;box-sizing:border-box;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);font:12px/1.4 ui-monospace,monospace}
 select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
 .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
+/* Costs tab: chart tokens (categorical slots 1-3 validated with the dataviz validator in light and dark) */
+#costs{--surface-1:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--base:#c3c2b7;--hair:rgba(11,11,11,.10);
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#cde2fb;--st-good:#0ca30c;--st-warn:#fab219;--st-crit:#d03b3b;--good-ink:#006300}
+@media (prefers-color-scheme:dark){#costs{--surface-1:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#2c2c2a;--base:#383835;--hair:rgba(255,255,255,.10);
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#0d366b;--good-ink:#0ca30c}}
+#costs.loading .chart,#costs.loading .tiles{opacity:.6}
+.filters{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:4px 0 12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent;padding:5px 12px}
+.seg button+button{border-left:1px solid var(--line)}.seg button[aria-pressed=true]{background:var(--a);color:#fff}
+.hero{font-size:56px;line-height:1.1;font-weight:600;margin:6px 0 0;letter-spacing:-.01em}.hero small{font-size:14px;font-weight:400;color:var(--mut);margin-left:8px;letter-spacing:0}
+.chart{background:var(--surface-1);border:1px solid var(--hair);border-radius:8px;padding:14px 16px;margin:8px 0;color:var(--ink)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink2);margin:0 0 10px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.hrow{display:grid;grid-template-columns:minmax(70px,190px) 1fr 64px;gap:10px;align-items:center;min-height:28px;font-size:13px}
+.hrow .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hrow .tt{color:var(--ink2);text-align:right;font-variant-numeric:tabular-nums}
+.hbar{display:flex;gap:2px;height:16px}.hbar>b{display:block;min-width:2px;height:100%;outline-offset:2px}
+.hbar>b:last-child{border-radius:0 4px 4px 0}.hbar>b:hover,.hbar>b:focus{filter:brightness(1.12);outline:2px solid var(--ink2)}
+.cols{position:relative;display:flex;align-items:flex-end;gap:2px;height:150px;margin-left:44px;border-bottom:1px solid var(--base)}
+.cols .g{position:absolute;left:0;right:0;border-top:1px solid var(--grid);pointer-events:none}.cols .g span{position:absolute;left:-44px;top:-8px;width:38px;text-align:right;font-size:11px;color:var(--muted)}
+.col{position:relative;flex:1;height:100%;display:flex;align-items:flex-end;justify-content:center;min-width:6px;cursor:default}
+.col b{display:block;width:100%;max-width:24px;background:var(--s1);border-radius:4px 4px 0 0}.col:hover b,.col:focus b{filter:brightness(1.12)}.col:focus{outline:2px solid var(--ink2);outline-offset:1px}
+.xl{display:flex;justify-content:space-between;margin:4px 0 0 44px;font-size:11px;color:var(--muted)}
+#tip{position:fixed;z-index:9;pointer-events:none;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.18);max-width:280px}
+#tip .h{font-weight:600;margin-bottom:4px}#tip .r{display:flex;gap:8px;align-items:center;white-space:nowrap}#tip .k{display:inline-block;width:12px;height:3px;border-radius:2px}
+#tip .v{font-weight:600;margin-left:auto;padding-left:14px;font-variant-numeric:tabular-nums}#tip .l{color:var(--mut)}
+.meter{height:10px;border-radius:5px;background:var(--track);overflow:hidden;margin:4px 0}.meter i{display:block;height:100%;border-radius:0 5px 5px 0;background:var(--s1)}
+.s-warning .meter i{background:var(--st-warn)}.s-over .meter i{background:var(--st-crit)}
+.badge{font-size:11px;border:1px solid var(--line);border-radius:10px;padding:1px 7px;color:var(--mut);margin-left:6px}
+.sl{font-size:12px;color:var(--ink2)}.s-ok .sl b{color:var(--good-ink)}.s-warning .sl b,.s-over .sl b{color:var(--ink)}
+.form{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.form label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:2px}.form input{width:130px}
+details.tv summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:8px}
 .msg{font-size:12px;color:var(--mut);margin-top:4px;white-space:pre-wrap}.warn{color:#b54708}.ok{color:#067647}.neg{color:#067647}.pos{color:#b54708}
 </style></head><body><main>
 <h1>ModelSpend</h1>
 <p class="note">Local usage. <b>Token counts are exactly what the providers reported</b>, summed over every attempt (retries, escalations, judge). Cost is computed from those tokens and catalog prices when a price is known (your invoice is authoritative), otherwise shown as "unknown". No prompts or responses are stored.</p>
 <p id="auth" hidden><input id="tok" type="password" placeholder="API token"> <button onclick="saveTok()">Use</button></p>
-<nav><a id="nav-usage" class="on" href="#usage">Usage</a><a id="nav-pricing" href="#pricing">Pricing</a></nav>
+<nav><a id="nav-usage" class="on" href="#usage">Usage</a><a id="nav-costs" href="#costs">Costs</a><a id="nav-pricing" href="#pricing">Pricing</a></nav>
 <section id="usage">
 <div class="tiles" id="tiles"></div>
 <h2>Tokens by provider</h2><div class="wrap"><table id="prov"></table></div>
@@ -37,6 +69,31 @@ select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var
 <h2>Validation outcomes</h2><div class="wrap"><table id="val"></table></div>
 <h2>Recent requests</h2><div class="wrap"><table id="recent"></table></div>
 </section>
+<section id="costs" hidden>
+<p class="note">Tokens and cost per project and per agent, from calls made <b>through ModelSpend</b> (tag them with <code>--project</code>/<code>--agent</code> or the <code>X-ModelSpend-*</code> headers). Cost uses the prices in effect when each call ran. Your provider's invoice is authoritative.</p>
+<div class="filters" role="group" aria-label="Filters">
+ <span class="seg" id="c-win"><button data-w="24h">24 h</button><button data-w="7d">7 days</button><button data-w="30d">30 days</button><button data-w="all">All</button></span>
+ <label class="note">Group by <select id="c-by"><option value="project">project</option><option value="agent">agent</option><option value="model">model</option><option value="provider">provider</option><option value="task">task</option><option value="purpose">purpose (initial, retry, escalation, ...)</option></select></label>
+ <label class="note">Project <select id="c-proj"><option value="">all</option></select></label>
+</div>
+<div class="hero" id="c-hero">0<small>tokens</small></div>
+<div class="tiles" id="c-tiles"></div>
+<h2>Tokens by <span id="c-bylabel">project</span></h2>
+<div class="chart"><div class="legend" aria-label="Legend"><span><i style="background:var(--s1)"></i>Input (uncached)</span><span><i style="background:var(--s2)"></i>Cached input</span><span><i style="background:var(--s3)"></i>Output (incl. reasoning)</span></div><div id="c-bars"></div></div>
+<h2>Tokens per day (UTC)</h2>
+<div class="chart"><div id="c-days"></div><details class="tv"><summary>Table view</summary><div class="wrap"><table id="c-daytbl"></table></div></details></div>
+<h2>Details</h2><div class="wrap"><table id="c-tbl"></table></div>
+<p class="note" id="c-notes"></p>
+<h2>Budgets</h2>
+<p class="note">Limits per project and/or agent for the current UTC day or month. <b>Hard</b> budgets refuse a call before it is made if its worst case would exceed the limit (HTTP 429, nothing is sent to the provider). <b>Soft</b> budgets only warn. USD limits count only calls on models with a price; token limits count everything.</p>
+<div id="c-budgets"></div>
+<div class="card"><b>Add or change a budget</b> <span class="note">(same project + agent + period replaces the old one; leave project and agent empty for everything)</span>
+<div class="form"><label>Project<input id="b-project" placeholder="any"></label><label>Agent<input id="b-agent" placeholder="any"></label>
+<label>Period<select id="b-period"><option>monthly</option><option>daily</option></select></label><label>USD limit<input id="b-usd" type="number" min="0" step="any" placeholder="optional"></label>
+<label>Token limit<input id="b-tokens" type="number" min="0" step="1" placeholder="optional"></label><label>Mode<select id="b-mode"><option>hard</option><option>soft</option></select></label>
+<button class="pri" id="b-add">Save budget</button></div><div class="msg" id="b-msg"></div></div>
+</section>
+<div id="tip" role="tooltip" hidden></div>
 <section id="pricing" hidden>
 <p class="note">Each provider's <b>official pricing page</b>. Paste a new URL if one moves. <b>Check</b> says whether the page changed since you last accepted it; <b>Refresh prices</b> reads the page and proposes updates, which you review below. Nothing changes your catalog until you press Apply. Reading a changed page uses a few thousand tokens of your own provider key (shown in the result and in Usage); an unchanged page uses none.</p>
 <h2>Pricing pages</h2><div class="wrap"><table id="srcs"></table></div>
@@ -71,9 +128,10 @@ async function load(){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(
  tbl('recent',[['Time','ts','',v=>new Date(v*1000).toLocaleTimeString()],['Task','task'],['Model','model'],['Status','status'],['Validation','validation'],
   ['Esc.','escalations','n'],['In','input_tokens','n',n0],['Cached','cache_read_tokens','n',n0],['Out','output_tokens','n',n0],['Reasoning','reasoning_tokens','n',n0],
   ['Cost','actual_cost','n',usd],['ms','latency_ms','n']],d.recent||[]);}
-load();setInterval(()=>{if(!$('usage').hidden)load()},5000);
-function show(v){$('usage').hidden=v!=='pricing'?false:true;$('pricing').hidden=v!=='pricing';
- $('nav-usage').className=v==='pricing'?'':'on';$('nav-pricing').className=v==='pricing'?'on':'';if(v==='pricing')loadPricing();else load()}
+load();setInterval(()=>{if(!$('usage').hidden)load();else if(!$('costs').hidden)loadCosts()},8000);
+const VIEWS=['usage','costs','pricing'];
+function show(v){if(!VIEWS.includes(v))v='usage';VIEWS.forEach(x=>{$(x).hidden=x!==v;$('nav-'+x).className=x===v?'on':''});
+ if(v==='pricing')loadPricing();else if(v==='costs')loadCosts();else load()}
 window.addEventListener('hashchange',()=>show(location.hash.slice(1)));
 function api(path,method='GET',body){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(e){}
  const h={'Content-Type':'application/json'};if(t)h.Authorization='Bearer '+t;
@@ -115,5 +173,77 @@ document.addEventListener('click',async ev=>{const b=ev.target.closest('button[d
 $('pbtn').addEventListener('click',async()=>{const b=$('pbtn');b.disabled=true;say('pmsg','extracting…');
  try{const r=await api('/v1/pricing/refresh','POST',{provider:$('pp').value,text:$('ptxt').value});say('pmsg',describe(r),r.state==='error'?'warn':'ok');await loadProposals()}
  catch(e){say('pmsg',String(e.message),'warn')}finally{b.disabled=false}});
+
+// ---------------------------------------------------------------- Costs tab
+const CW={win:'7d',by:'project',proj:''};
+const compact=v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e4?(v/1e3).toFixed(1)+'K':n0(v);
+const cost=(v,complete)=>v==null?'unknown':usd(v)+(complete===false?' +':'');
+const sh=$('tip');
+function tipShow(ev,head,rows){sh.textContent='';const h=document.createElement('div');h.className='h';h.textContent=head;sh.appendChild(h);
+ rows.forEach(r=>{const d=document.createElement('div');d.className='r';if(r.color){const k=document.createElement('span');k.className='k';k.style.background=r.color;d.appendChild(k)}
+  const l=document.createElement('span');l.className='l';l.textContent=r.label;const v=document.createElement('span');v.className='v';v.textContent=r.value;d.append(l,v);sh.appendChild(d)});
+ sh.hidden=false;const b=ev.currentTarget.getBoundingClientRect(),x=ev.clientX||b.left+b.width/2,y=ev.clientY||b.top;
+ sh.style.left=Math.max(8,Math.min(x+12,innerWidth-sh.offsetWidth-8))+'px';sh.style.top=Math.max(8,Math.min(y+14,innerHeight-sh.offsetHeight-8))+'px'}
+function tipHide(){sh.hidden=true}
+function wire(el,head,rows){el.tabIndex=0;el.setAttribute('aria-label',head+': '+rows.map(r=>r.label+' '+r.value).join(', '));
+ ['pointerenter','pointermove','focus'].forEach(t=>el.addEventListener(t,e=>tipShow(e,head,rows)));['pointerleave','blur'].forEach(t=>el.addEventListener(t,tipHide))}
+const SUMF=['requests','attempts','input_tokens','cache_read_tokens','cache_write_tokens','output_tokens','reasoning_tokens','total_tokens','unpriced_attempts','overhead_tokens'];
+function foldTail(rows,key,keep){if(rows.length<=keep)return rows;const head=rows.slice(0,keep-1),tail=rows.slice(keep-1);
+ const o={[key]:'Other ('+tail.length+')',cost:0,overhead_cost:0,cost_complete:true};SUMF.forEach(f=>o[f]=tail.reduce((a,r)=>a+(r[f]||0),0));
+ tail.forEach(r=>{o.cost+=r.cost||0;if(!r.cost_complete)o.cost_complete=false});o.overhead_token_share=o.total_tokens?o.overhead_tokens/o.total_tokens:0;return [...head,o]}
+function bars(el,rows,key){el.textContent='';if(!rows.length){el.textContent='No calls recorded in this window.';el.className='note';return}el.className='';
+ const mx=Math.max(1,...rows.map(r=>r.total_tokens));
+ rows.forEach(r=>{const row=document.createElement('div');row.className='hrow';const nm=document.createElement('div');nm.className='nm';nm.textContent=r[key];nm.title=r[key];
+  const track=document.createElement('div'),bar=document.createElement('div');bar.className='hbar';bar.style.width=Math.max(1,100*r.total_tokens/mx)+'%';
+  const parts=[['Input (uncached)',r.input_tokens,'var(--s1)'],['Cached input',r.cache_read_tokens+r.cache_write_tokens,'var(--s2)'],['Output',r.output_tokens,'var(--s3)']];
+  const tot=document.createElement('div');tot.className='tt';tot.textContent=compact(r.total_tokens);
+  parts.filter(p=>p[1]>0).forEach(p=>{const seg=document.createElement('b');seg.style.flex=p[1]+' 1 0';seg.style.background=p[2];
+   wire(seg,String(r[key]),[...parts.map(q=>({label:q[0],value:n0(q[1]),color:q[2]})),{label:'Total tokens',value:n0(r.total_tokens)},{label:'Cost',value:cost(r.cost,r.cost_complete)},
+     {label:'Overhead',value:(r.overhead_token_share*100).toFixed(0)+'% of tokens'},{label:'Requests',value:n0(r.requests)}]);bar.appendChild(seg)});
+  track.appendChild(bar);row.append(nm,track,tot);el.appendChild(row)})}
+function dayChart(el,tbl,rows){el.textContent='';const by={};rows.forEach(r=>by[r.day]=r);const ds=Object.keys(by).sort();
+ if(!ds.length){el.textContent='No calls recorded in this window.';el.className='note';tbl.innerHTML='';return}el.className='';
+ const first=new Date(ds[0]+'T00:00:00Z'),last=new Date(ds[ds.length-1]+'T00:00:00Z'),days=[];
+ for(let t=first;t<=last&&days.length<90;t=new Date(t.getTime()+864e5))days.push(t.toISOString().slice(0,10));
+ const mx=Math.max(1,...days.map(d=>(by[d]||{}).total_tokens||0));const plot=document.createElement('div');plot.className='cols';
+ [1,.5].forEach(f=>{const g=document.createElement('div');g.className='g';g.style.bottom=(f*100)+'%';const sp=document.createElement('span');sp.textContent=compact(Math.round(mx*f));g.appendChild(sp);plot.appendChild(g)});
+ days.forEach(d=>{const r=by[d]||{total_tokens:0,requests:0,cost:0,cost_complete:true,input_tokens:0,output_tokens:0};const c=document.createElement('div');c.className='col';
+  const b=document.createElement('b');b.style.height=r.total_tokens?Math.max(2,100*r.total_tokens/mx)+'%':'0';c.appendChild(b);
+  wire(c,d,[{label:'Tokens',value:n0(r.total_tokens),color:'var(--s1)'},{label:'Cost',value:cost(r.cost,r.cost_complete)},{label:'Requests',value:n0(r.requests)}]);plot.appendChild(c)});
+ const xl=document.createElement('div');xl.className='xl';[days[0],days[Math.floor(days.length/2)],days[days.length-1]].forEach(d=>{const s=document.createElement('span');s.textContent=d.slice(5);xl.appendChild(s)});
+ el.append(plot,xl);
+ tbl.innerHTML='<tr><th>Day</th><th class="n">Requests</th><th class="n">Tokens</th><th class="n">Cost</th></tr>'+days.map(d=>{const r=by[d]||{};return `<tr><td>${esc(d)}</td><td class="n">${n0(r.requests)}</td><td class="n">${n0(r.total_tokens)}</td><td class="n">${esc(r.cost==null&&r.total_tokens?'unknown':usd(r.cost||0))}</td></tr>`}).join('')}
+function meter(label,spent,limit,pct,fmt){if(limit==null)return '';return `<div class="sl">${esc(label)}: ${esc(fmt(spent))} of ${esc(fmt(limit))} (${Math.round((pct||0)*100)}%)</div><div class="meter" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100,Math.round((pct||0)*100))}"><i style="width:${Math.min(100,(pct||0)*100)}%"></i></div>`}
+function budgets(list){$('c-budgets').innerHTML=list.length?list.map(b=>{
+  const st={ok:['✓','On track'],warning:['▲','Approaching the limit'],over:['✕',b.mode==='hard'?'Over the limit: calls are refused':'Over the limit (soft: warning only)']}[b.state];
+  return `<div class="card s-${esc(b.state)}"><b>${esc(b.scope)}</b><span class="badge">${esc(b.period)}</span><span class="badge">${esc(b.mode)}</span>
+  <span style="float:right"><button data-del="${esc(b.id)}">Remove</button></span>
+  ${meter('USD',b.spent_usd+b.in_flight_usd,b.limit_usd,b.pct_usd,v=>'$'+Number(v).toFixed(4))}${meter('Tokens',b.spent_tokens+b.in_flight_tokens,b.limit_tokens,b.pct_tokens,n0)}
+  <div class="sl"><b>${st[0]} ${esc(st[1])}</b> · resets ${esc(b.resets_at_text)}${b.usd_complete?'':' · USD is partial: '+n0(b.unpriced_calls)+' call(s) had no price'}</div></div>`}).join(''):'<p class="note">No budgets yet. Add one below, or run <code>modelspend budget set --project shop --period monthly --usd 50</code>.</p>'}
+async function loadCosts(){const root=$('costs');root.classList.add('loading');
+ try{const f=CW.proj?'&project='+encodeURIComponent(CW.proj):'',q=(by,extra='')=>api('/v1/usage/report?by='+by+'&since='+CW.win+'&top=200'+extra);
+  const [g,days,projs,bud]=await Promise.all([q(CW.by,f),q('day',f),q('project'),api('/v1/budgets')]);
+  const T=g.totals;$('c-hero').innerHTML=esc(compact(T.total_tokens))+'<small>tokens · in '+esc(compact(T.input_tokens+T.cache_read_tokens+T.cache_write_tokens))+' · out '+esc(compact(T.output_tokens))+'</small>';
+  $('c-tiles').innerHTML=[['Cost (known prices)',(T.cost==null?'unknown':usd(T.cost))+(T.cost_complete?'':' (partial)')],['Requests',n0(T.requests)],
+   ['Overhead (retries, escalations, judge)',((T.overhead_token_share||0)*100).toFixed(0)+'% · '+usd(T.overhead_cost)],['Cache hit rate',((T.cache_hit_rate||0)*100).toFixed(0)+'%'],
+   ['Calls without a price',n0(T.unpriced_attempts)]].map(x=>`<div class="tile"><b>${esc(x[1])}</b><span>${esc(x[0])}</span></div>`).join('');
+  $('c-bylabel').textContent=CW.by;const key=CW.by;let rows=g.rows.slice();bars($('c-bars'),foldTail(rows,key,12),key);
+  dayChart($('c-days'),$('c-daytbl'),days.rows);
+  tbl('c-tbl',[[key[0].toUpperCase()+key.slice(1),key],['Requests','requests','n',n0],['Tokens','total_tokens','n',n0],['Input','input_tokens','n',n0],['Cached','cache_read_tokens','n',n0],['Output','output_tokens','n',n0],
+   ['Reasoning','reasoning_tokens','n',n0],['Cost','cost','n',(v,r)=>cost(v,r.cost_complete)],['Overhead','overhead_token_share','n',v=>((v||0)*100).toFixed(0)+'%'],['No price','unpriced_attempts','n',n0]],rows,'total_tokens');
+  $('c-notes').textContent=g.notes.join(' ')+(g.truncated?' Showing the top 200 groups.':'')+(rows.length>12?' The chart folds the smallest groups into "Other"; the table lists all.':'');
+  const sel=$('c-proj'),cur=CW.proj;sel.innerHTML='<option value="">all</option>'+projs.rows.map(r=>`<option value="${esc(r.project)}">${esc(r.project)}</option>`).join('');sel.value=cur;
+  budgets(bud.budgets)
+ }catch(e){$('c-notes').textContent='Could not load costs ('+e.message+').'+(/not found/i.test(e.message)?' The server process is older than this page: run modelspend restart.':'')}
+ finally{root.classList.remove('loading')}}
+$('c-win').addEventListener('click',e=>{const b=e.target.closest('button[data-w]');if(!b)return;CW.win=b.dataset.w;syncSeg();loadCosts()});
+function syncSeg(){document.querySelectorAll('#c-win button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.w===CW.win)))}syncSeg();
+$('c-by').addEventListener('change',e=>{CW.by=e.target.value;loadCosts()});$('c-proj').addEventListener('change',e=>{CW.proj=e.target.value;loadCosts()});
+$('c-budgets').addEventListener('click',async e=>{const b=e.target.closest('button[data-del]');if(!b)return;b.disabled=true;
+ try{await api('/v1/budgets/'+encodeURIComponent(b.dataset.del),'DELETE');await loadCosts()}catch(err){say('b-msg',String(err.message),'warn');b.disabled=false}});
+$('b-add').addEventListener('click',async()=>{const b=$('b-add');b.disabled=true;const num=id=>{const v=$(id).value.trim();return v===''?null:Number(v)};
+ const body={period:$('b-period').value,mode:$('b-mode').value};if($('b-project').value.trim())body.project=$('b-project').value.trim();if($('b-agent').value.trim())body.agent=$('b-agent').value.trim();
+ if(num('b-usd')!=null)body.limit_usd=num('b-usd');if(num('b-tokens')!=null)body.limit_tokens=num('b-tokens');
+ try{await api('/v1/budgets','PUT',body);say('b-msg','saved','ok');await loadCosts()}catch(err){say('b-msg',String(err.message),'warn')}finally{b.disabled=false}});
 show(location.hash.slice(1));
 </script></main></body></html>

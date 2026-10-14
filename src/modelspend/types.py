@@ -343,6 +343,7 @@ class RouteResult(BaseModel):
     run_id: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     pinned: bool = False  # observe-only: the caller chose the model; no routing, failover or escalation
+    budget_warnings: list[str] = Field(default_factory=list)  # soft per-project/agent budgets that are near or over their limit
 
     def json_metadata(self) -> dict[str, Any]:
         return json.loads(self.model_dump_json(exclude={"text"}))

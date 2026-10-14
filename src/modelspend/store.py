@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,11 @@ create table if not exists attempts(
 create table if not exists class_cache(key text primary key, category text, ts real);
 create table if not exists meta(k text primary key, v blob);
 create index if not exists attempts_model on attempts(provider, model);
+create table if not exists budgets(
+  id integer primary key autoincrement, project text, agent text, period text, limit_usd real, limit_tokens integer,
+  mode text, created_ts real);
+create unique index if not exists budgets_scope on budgets(coalesce(project, ''), coalesce(agent, ''), period);
+create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
 
@@ -34,8 +40,12 @@ class Store:
         if self.path != ":memory:":
             from .config import private_mkdir
             private_mkdir(Path(self.path).parent)
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
+        self.db = sqlite3.connect(self.path, check_same_thread=False, timeout=10.0)
         self.db.row_factory = sqlite3.Row
+        self.lock = threading.RLock()  # budget reservations and admin writes serialize on this (and on SQLite's write lock across processes)
+        self.db.execute("pragma busy_timeout = 10000")
+        if self.path != ":memory:":
+            self.db.execute("pragma journal_mode = wal")  # readers (reports, dashboard) never block the writers
         self.db.executescript(SCHEMA)
         self._migrate()
         if self.path != ":memory:":
@@ -116,6 +126,17 @@ class Store:
                  u.cache_read_tokens, u.cache_write_tokens, u.output_tokens, u.reasoning_tokens,
                  a.estimated_cost_usd, a.cost_usd, a.cost_basis, a.latency_ms))
         self.db.commit()
+
+    def prune(self, older_than_ts: float, dry_run: bool = False) -> dict[str, int]:
+        """Delete requests (and their attempts) recorded before the given time. Budgets and the classifier cache are untouched."""
+        with self.lock:
+            n = self.db.execute("select count(*) from requests where ts < ?", (older_than_ts,)).fetchone()[0]
+            a = self.db.execute("select count(*) from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,)).fetchone()[0]
+            if not dry_run and n:
+                self.db.execute("delete from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,))
+                self.db.execute("delete from requests where ts < ?", (older_than_ts,))
+                self.db.commit()
+        return {"requests": n, "attempts": a}
 
     # ---- queries ----------------------------------------------------------------------
     def latency_p50(self, provider: str, model: str) -> tuple[float, int] | None:

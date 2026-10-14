@@ -13,7 +13,7 @@ Python SDK, CLI, a local FastAPI server with an OpenAI-compatible `/v1/chat/comp
 > - **Tokens first.** Token usage (input, cached, output, reasoning) is exact, provider-reported and summed over every attempt; it is the headline number in the CLI, API and dashboard. Cost is derived from it and shown as `unknown` for models without a price (`--allow-unpriced`). Budgets can be set in tokens (`--budget-tokens`) as well as dollars.
 > - **Verified live (2026-10-12): Anthropic** — model sync, routing, one-step escalation, token budgets, streaming and the dashboard, with token counts and cost checked against the provider's reported usage. **Verified live (2026-10-12): OpenAI, partially** — chat and streaming calls on `gpt-4.1-nano` and `gpt-5-mini`: routing, catalog sync, token counts (the pre-call input estimate matched the provider's count exactly, and reasoning tokens arrive inside the output count), provider-reported usage in the stream, and cost computed from the catalog prices. **Not yet exercised live for OpenAI:** strict structured output, failover on a bad key, cross-vendor escalation, and a comparison against the provider's billing page. The **Gemini and xAI adapters are implemented with the official SDKs but tested only against recorded-shape fakes**, not yet live ([docs/limitations.md](docs/limitations.md)). Reports from people running them are welcome.
 > - Savings figures exist only as measured output of `modelspend eval`; mock runs are labelled **SIMULATED** and are not benchmarks.
-> - **New in 0.2.0b1: per-project / per-agent reporting.** Tested with mocked providers; its numbers have not yet been compared against the providers' own usage pages, and only calls made through ModelSpend are counted ([docs/cost-attribution.md](docs/cost-attribution.md)).
+> - **Per-project / per-agent reporting (0.2)** was checked live against Anthropic and OpenAI. **The dashboard Costs tab and per-agent budgets (0.3) are tested with mocked providers and a real browser, not yet live.** Only calls made through ModelSpend are counted ([docs/cost-attribution.md](docs/cost-attribution.md)).
 
 ## Five-minute quickstart (no API keys needed)
 
@@ -143,7 +143,18 @@ modelspend route "Classify: I was charged twice" --providers anthropic --project
 modelspend report --by project,agent,model --since 7d
 ```
 
-Tag calls from the SDK (`ModelSpend(project=..., agent=...)`) or any OpenAI client (`X-ModelSpend-Project` / `X-ModelSpend-Agent` headers). To measure an existing agent **without routing it**, pin a model (`--model provider/id`, or `model="provider/id"` on the server). The report shows tokens by type, cost, and the overhead spent on attempts that did not produce the final answer; CSV and JSON output are available. Full guide, definitions and limits: [docs/cost-attribution.md](docs/cost-attribution.md).
+Tag calls from the SDK (`ModelSpend(project=..., agent=...)`) or any OpenAI client (`X-ModelSpend-Project` / `X-ModelSpend-Agent` headers). To measure an existing agent **without routing it**, pin a model (`--model provider/id`, or `model="provider/id"` on the server). The report shows tokens by type, cost, and the overhead spent on attempts that did not produce the final answer; CSV and JSON output are available. The dashboard's **Costs** tab shows the same data with charts, filters and budget meters.
+
+**Budgets per project and agent** (daily or monthly, USD and/or tokens, hard or soft):
+
+```bash
+modelspend budget set --project shop --period monthly --usd 50
+modelspend budget list
+```
+
+A hard budget refuses a call *before* it is sent if its worst case would exceed the limit (HTTP 429), counting everything already spent and in flight; a soft budget only warns.
+
+Full guide, definitions and limits: [docs/cost-attribution.md](docs/cost-attribution.md).
 
 ## SDK
 

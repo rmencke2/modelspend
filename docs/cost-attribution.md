@@ -1,7 +1,6 @@
 # Cost attribution: tokens and cost per project and per agent
 
-*New in 0.2.0b1. Tested with mocked providers; a comparison against the providers' own usage pages is still to be done (see
-[roadmap](roadmap-cost-attribution.md)).*
+*Reporting (0.2) was checked live against Anthropic and OpenAI usage. The dashboard Costs tab and budgets (0.3) are tested with mocked providers and a real browser, but not yet exercised against live providers (see [roadmap](roadmap-cost-attribution.md)).*
 
 ModelSpend does two things: it **routes** each task to a suitable low-cost model, and it **shows where your tokens and money go**.
 This page is about the second. You do not have to use routing to get it.
@@ -82,9 +81,48 @@ data endpoints). A dashboard view is planned for 0.3.
 - **uncertain**: a call that failed but may have been billed is charged at an upper bound and counted in `uncertain_attempts`.
 - Your provider's invoice is authoritative.
 
+## 4. The dashboard Costs tab (0.3)
+
+Open `http://127.0.0.1:8787/dashboard#costs`. One filter row (window: 24 h / 7 days / 30 days / all; group by; project) scopes everything
+below it: the token total, tiles for cost, requests, **overhead**, cache hit rate and **calls without a price**, tokens by group as stacked
+bars (input, cached input, output; hover or focus a bar for the details), tokens per day (UTC), and a table with every number. The
+chart shows at most 12 groups and folds the rest into "Other"; the table lists them all.
+
+## 5. Budgets per project and agent (0.3)
+
+```bash
+modelspend budget set --project shop --period monthly --usd 50                      # hard limit for the whole project
+modelspend budget set --project shop --agent invoice-bot --period daily --tokens 2000000 --mode soft
+modelspend budget set --agent invoice-bot --period monthly --usd 20                 # that agent in every project
+modelspend budget set --period monthly --usd 500                                    # everything through ModelSpend
+modelspend budget list
+modelspend budget remove 3
+```
+
+A call is subject to every budget whose scope matches its tags (an empty project or agent matches any). Limits are for the current **UTC
+day or month**, in USD and/or tokens.
+
+- **Hard:** before every provider call (including each retry, failover, escalation, classifier or judge call, and streams), ModelSpend
+  checks *spent so far + calls in flight + this call's worst case*. If a hard limit would be exceeded the call is **not made** and you get
+  HTTP 429 `period_budget_exceeded` (CLI/SDK: `PeriodBudgetExceeded`) naming the budget, the amounts and when it resets. If a later
+  escalation would not fit, the earlier answer is returned with the reason instead of an error.
+- **Soft:** never refuses. The result carries `budget_warnings` (at 80% and when over) and `modelspend budget list` shows the state.
+- **Atomic:** the check and the reservation happen in one SQLite write transaction, so several threads or processes sharing the same
+  usage database cannot jointly overshoot a limit. A call in flight holds its worst case; the hold shrinks to what was really spent after
+  each call and is dropped when the request ends. A hold left by a crashed process expires after 15 minutes.
+- **USD limits count only priced calls.** A hard USD limit refuses to run a model that has no price (it cannot know the cost); use a token
+  limit for those. Failed calls that may have been billed count at their upper-bound estimate.
+- The dashboard shows each budget as a meter (on track / approaching / over) and can add or remove them.
+
+## 6. Retention
+
+`modelspend prune 90d` shows what would be deleted; add `--yes` to delete usage records older than that (budgets and settings are kept).
+Reports and budget windows are computed from what remains.
+
 ## Limits you should know
 
 - **Only calls made through ModelSpend are counted.** Traffic that bypasses it is invisible. Importing the providers' own usage data
   is planned, not built.
 - Everything is stored locally in SQLite (`~/.modelspend/usage.db`), metadata only: no prompts, no responses, no keys.
-- A single machine and SQLite are assumed. Persistent per-agent budgets and a dashboard view are planned for 0.3.
+- A single machine and SQLite are assumed. Budgets are enforced by the processes that share one usage database on one machine; they are not designed for network file systems or several machines.
+- Budget windows are UTC. Budgets only see calls made through ModelSpend.

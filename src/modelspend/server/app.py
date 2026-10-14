@@ -173,7 +173,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.2.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.3.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:
@@ -344,6 +344,35 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
                                 until=parse_since(q.get("until")), limit=top)
         except ReportError as e:
             raise InvalidRequest(str(e))
+
+    # ---------------- budgets (per project / agent) ----------------
+    @app.get("/v1/budgets", dependencies=[Depends(auth), Depends(host_guard)])
+    async def budgets_status():
+        from ..budgets import status
+        return {"budgets": status(engine.store) if engine.store else []}
+
+    @app.put("/v1/budgets", dependencies=[Depends(auth), Depends(guard)])
+    async def budgets_put(request: Request):
+        from ..budgets import set_budget, status
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        body = await _json(request)
+        extra = [k for k in body if k not in ("project", "agent", "period", "limit_usd", "limit_tokens", "mode")]
+        if extra:
+            raise InvalidRequest(f"unknown field '{extra[0]}'", param=extra[0])
+        try:
+            b = set_budget(engine.store, project=body.get("project"), agent=body.get("agent"), period=body.get("period", "monthly"),
+                           limit_usd=body.get("limit_usd"), limit_tokens=body.get("limit_tokens"), mode=body.get("mode", "hard"))
+        except ValueError as e:
+            raise InvalidRequest(str(e))
+        return {"budget": next((s for s in status(engine.store) if s["id"] == b.id), None)}
+
+    @app.delete("/v1/budgets/{budget_id}", dependencies=[Depends(auth), Depends(guard)])
+    async def budgets_delete(budget_id: int):
+        from ..budgets import remove_budget
+        if engine.store is None or not remove_budget(engine.store, budget_id):
+            raise InvalidRequest(f"no budget #{budget_id}")
+        return {"removed": budget_id}
 
     # ---------------- pricing sources and refresh (dashboard "Pricing" tab) ----------------
     def _sources_view() -> dict:
