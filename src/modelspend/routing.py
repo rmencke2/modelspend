@@ -16,7 +16,7 @@ from .config import Config
 from .errors import (
     BudgetTooLow, InvalidRequest, NoEligibleModel, ProviderAllowlistRequired, ValidationRequired,
 )
-from .policy import EXPECTED_OUTPUT_TOKENS, POLICY_VERSION, PROFILES, assess, required_tier
+from .policy import EXPECTED_OUTPUT_TOKENS, POLICY_VERSION, PROFILES, Suitability, assess, required_tier
 from .pricing import cost_for, estimate_cost
 from .tasks import Classification, classify_rules
 from .tokens import estimate_input_tokens, reservation_input_tokens
@@ -87,7 +87,7 @@ class Router:
         providers = self.resolve_providers(req)
         validate_provider_options(req)
         pol = PROFILES[req.profile]
-        if pol.require_validation and not req.has_validation():
+        if pol.require_validation and not req.has_validation() and not req.pin:
             raise ValidationRequired(
                 "the high_assurance profile requires configured validation "
                 "(response_schema, validators, callable validators or judge=true)"
@@ -114,11 +114,22 @@ class Router:
         def drop(m: Model, stage: str, reason: str) -> None:
             excluded.append(Exclusion(provider=m.provider, model=m.id, stage=stage, reason=reason))
 
-        for m in self.catalog.for_providers(providers):
+        models = self.catalog.for_providers(providers)
+        if req.pin:
+            models = [m for m in models if m.ref == req.pin]
+            if not models:
+                raise NoEligibleModel(
+                    f"pinned model '{req.pin}' is not in the catalog for the allowed providers ({', '.join(providers)}). "
+                    "Add it with `modelspend catalog sync --add-new --only <id> --exact --write` (it may stay unpriced: tokens are still exact).")
+        for m in models:
             if m.provider not in self.available:
                 drop(m, "provider", "no API key configured for this provider")
             elif req.sensitive and m.provider not in sens_ok:
                 drop(m, "privacy", "request is marked sensitive and provider is not approved in MODELSPEND_SENSITIVE_PROVIDERS")
+            elif req.pin and m.ref in deny:
+                drop(m, "policy", "disabled (deny_models: request or your settings)")
+            elif req.pin:
+                eligible.append(m)  # observe-only: the caller chose this model explicitly, so no suitability/price/limit gating
             elif allow and m.ref not in allow:
                 drop(m, "policy", "not in allow_models")
             elif m.ref in deny:
@@ -179,12 +190,13 @@ class Router:
             if budget is not None and worst is not None and worst > budget + 1e-12:
                 drop(m, "budget", f"worst-case cost ${worst:.6f} exceeds budget ${budget:.6f}")
                 continue
-            if self.latency_lookup and req.latency_target_ms:
+            if self.latency_lookup and req.latency_target_ms and not req.pin:
                 obs = self.latency_lookup(m.provider, m.id)
                 if obs and obs[1] >= 5 and obs[0] > req.latency_target_ms:
                     drop(m, "latency", f"observed p50 {obs[0]:.0f}ms (n={obs[1]}) exceeds target {req.latency_target_ms}ms")
                     continue
-            s = assess(m, cl.category, req.profile, req.hard)
+            s = (Suitability(True, "none", "pinned by the caller (observe-only: no suitability check)") if req.pin
+                 else assess(m, cl.category, req.profile, req.hard))
             cand = Candidate(
                 provider=m.provider, model=m.id, tier=m.tier, suitability_basis=s.basis,  # type: ignore[arg-type]
                 suitability_detail=s.detail, evidence_lower_bound=s.lower_bound,
@@ -206,7 +218,7 @@ class Router:
             c.rank = i
         unsuitable.sort(key=key)
 
-        limit = req.escalation_limit if req.escalation_limit is not None else pol.escalation_default
+        limit = 0 if req.pin else (req.escalation_limit if req.escalation_limit is not None else pol.escalation_default)
         plan = Plan(
             request_id=request_id or uuid.uuid4().hex[:12], task=task, profile=req.profile,
             candidates=suitable, unsuitable=unsuitable, excluded=excluded, input_tokens=in_tok,
@@ -217,6 +229,9 @@ class Router:
             catalog_version=self.catalog.version, policy_version=POLICY_VERSION,
         )
         plan.explanation = self._explain(plan, req)
+        if req.pin and suitable:
+            plan.explanation = (f"Pinned by the caller: running {req.pin} exactly (observe-only: no routing, failover or escalation); "
+                                f"tokens, cost and tags are recorded. ~{suitable[0].expected_total_tokens} tokens expected, up to {suitable[0].worst_case_total_tokens}.")
         if not suitable:
             if any(e.stage == "budget" for e in excluded) and not unsuitable:
                 raise BudgetTooLow(plan.explanation, plan=plan)

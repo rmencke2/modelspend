@@ -1,6 +1,7 @@
 """SQLite usage store. Stores metadata and accounting only: no prompts, no responses, no keys."""
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import sqlite3
@@ -48,6 +49,12 @@ class Store:
         for col in ("cache_read_tokens", "reasoning_tokens", "total_tokens"):
             if col not in have:
                 self.db.execute(f"alter table requests add column {col} int default 0")
+        # 0.2: attribution tags (nullable: rows written before 0.2 simply have no project/agent)
+        for col, decl in (("project", "text"), ("agent", "text"), ("run_id", "text"), ("labels", "text"), ("pinned", "int default 0")):
+            if col not in have:
+                self.db.execute(f"alter table requests add column {col} {decl}")
+        self.db.execute("create index if not exists requests_project_agent on requests(project, agent, ts)")
+        self.db.execute("create index if not exists attempts_request on attempts(request_id)")
         self.db.commit()
 
     # ---- classification cache (keys are salted HMACs, never prompt text) ---------------
@@ -75,25 +82,31 @@ class Store:
             r.validation.status, r.retries, r.failovers, r.escalations, r.estimated_cost_usd, r.actual_cost_usd,
             r.uncertain_cost_usd, r.budget_usd, r.usage.input_tokens + r.usage.cache_read_tokens + r.usage.cache_write_tokens,
             r.usage.output_tokens, r.latency_ms, r.catalog_version, r.policy_version, r.attempts,
-            cache_read=r.usage.cache_read_tokens, reasoning=r.usage.reasoning_tokens, total=r.total_tokens)
+            cache_read=r.usage.cache_read_tokens, reasoning=r.usage.reasoning_tokens, total=r.total_tokens,
+            tags={"project": r.project, "agent": r.agent, "run_id": r.run_id, "labels": r.labels, "pinned": r.pinned})
 
     def record_failure(self, request_id: str, profile: str, task: str, status: str, attempts: list, est: float,
-                       cost: float, uncertain: float, budget: float | None, catalog_v: str, policy_v: str, latency_ms: int) -> None:
+                       cost: float, uncertain: float, budget: float | None, catalog_v: str, policy_v: str, latency_ms: int,
+                       tags: dict | None = None) -> None:
         last = attempts[-1] if attempts else None
         self.record_row(request_id, profile, task, "n/a", last.provider if last else "-", last.model if last else "-",
-                        status, "n/a", 0, 0, 0, est, cost, uncertain, budget, 0, 0, latency_ms, catalog_v, policy_v, attempts)
+                        status, "n/a", 0, 0, 0, est, cost, uncertain, budget, 0, 0, latency_ms, catalog_v, policy_v, attempts,
+                        tags=tags)
 
     def record_row(self, rid, profile, task, basis, provider, model, status, validation, retries, failovers,
                    escalations, est, cost, uncertain, budget, in_tok, out_tok, latency, cv, pv, attempts,
-                   cache_read=0, reasoning=0, total=None) -> None:
+                   cache_read=0, reasoning=0, total=None, tags: dict | None = None) -> None:
         total = (in_tok or 0) + (out_tok or 0) if total is None else total
+        t = tags or {}
         self.db.execute(
             "insert or replace into requests(id,ts,profile,task,task_basis,provider,model,status,validation,retries,failovers,"
             "escalations,estimated_cost,actual_cost,uncertain_cost,budget,input_tokens,output_tokens,latency_ms,"
-            "catalog_version,policy_version,cache_read_tokens,reasoning_tokens,total_tokens) "
-            "values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "catalog_version,policy_version,cache_read_tokens,reasoning_tokens,total_tokens,project,agent,run_id,labels,pinned) "
+            "values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (rid, time.time(), profile, task, basis, provider, model, status, validation, retries, failovers,
-             escalations, est, cost, uncertain, budget, in_tok, out_tok, latency, cv, pv, cache_read, reasoning, total))
+             escalations, est, cost, uncertain, budget, in_tok, out_tok, latency, cv, pv, cache_read, reasoning, total,
+             t.get("project"), t.get("agent"), t.get("run_id"), json.dumps(t["labels"], sort_keys=True) if t.get("labels") else None,
+             1 if t.get("pinned") else 0))
         self.db.execute("delete from attempts where request_id=?", (rid,))
         for a in attempts:
             u = a.usage

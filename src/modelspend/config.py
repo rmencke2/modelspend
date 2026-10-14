@@ -110,6 +110,8 @@ class Config:
     exclude_stale_pricing: bool = False
     allow_preview_models: bool = False
     allow_unpriced: bool = False  # run models without catalog pricing (cost reported as unknown)
+    default_project: str | None = None  # attribution defaults (MODELSPEND_PROJECT / MODELSPEND_AGENT)
+    default_agent: str | None = None
     default_max_output_tokens: int = 1024
     reasoning_overhead_tokens: int = 1024
     max_retries: int = 2
@@ -177,6 +179,7 @@ class Config:
             exclude_stale_pricing=_bool(e.get("MODELSPEND_EXCLUDE_STALE_PRICING")),
             allow_preview_models=_bool(e.get("MODELSPEND_ALLOW_PREVIEW")),
             allow_unpriced=_bool(e.get("MODELSPEND_ALLOW_UNPRICED")),
+            default_project=(e.get("MODELSPEND_PROJECT") or None), default_agent=(e.get("MODELSPEND_AGENT") or None),
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             host=e.get("MODELSPEND_HOST", "127.0.0.1"),

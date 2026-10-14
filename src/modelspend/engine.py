@@ -38,6 +38,10 @@ from .validation import validate
 EPS = 1e-12
 
 
+def _tags(req: RouteRequest) -> dict:
+    return {"project": req.project, "agent": req.agent, "run_id": req.run_id, "labels": dict(req.labels), "pinned": req.pin is not None}
+
+
 class Ledger:
     """Cumulative spend across every attempt. `uncertain` holds upper-bound charges for failed calls."""
 
@@ -114,7 +118,7 @@ class Engine:
     # ================================================================ planning
     async def plan(self, req: RouteRequest, *, require_streaming: bool = False, ledger: Ledger | None = None) -> Plan:
         cl: Classification | None = None
-        if req.task_type is None:
+        if req.task_type is None and req.pin is None:  # pinned (observe-only) calls are never classified by a model
             cl = classify_rules(req.messages)
             if cl.ambiguous and self.store is not None:
                 key = privacy_key(self.store.salt(), req.messages)
@@ -388,13 +392,15 @@ class Engine:
             failovers=counters["failovers"], escalations=counters["escalations"], validation=report,
             budget_usd=req.max_budget_usd, budget_remaining_usd=ledger.remaining, uncertainty=unc,
             catalog_version=plan.catalog_version, policy_version=plan.policy_version,
-            latency_ms=int((time.monotonic() - t0) * 1000))
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            project=req.project, agent=req.agent, run_id=req.run_id, labels=dict(req.labels), pinned=req.pin is not None)
 
     def _record_failure(self, plan: Plan, ledger: Ledger, est: float, req: RouteRequest, t0: float, code: str) -> None:
         if self.store:
             self.store.record_failure(plan.request_id, plan.profile.value, plan.task.category.value, code, ledger.attempts,
                                       est, ledger.spent, ledger.uncertain, req.max_budget_usd, plan.catalog_version,
-                                      plan.policy_version, int((time.monotonic() - t0) * 1000))
+                                      plan.policy_version, int((time.monotonic() - t0) * 1000),
+                                      tags=_tags(req))
 
     async def run_single(self, req: RouteRequest, cand: Candidate, ledger: Ledger) -> tuple[ProviderResponse | None, int]:
         """One model, no validation, no escalation (bounded operational retries only).

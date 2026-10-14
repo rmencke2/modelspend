@@ -59,7 +59,39 @@ def _err(status: int, message: str, code: str, param: str | None = None, **extra
                                                               "param": param, "code": code, **extra}})
 
 
-def to_route_request(body: dict[str, Any], cfg: Config) -> tuple[RouteRequest, bool]:
+def _tags_from_headers(headers: Any) -> dict[str, Any]:
+    """X-ModelSpend-Project / -Agent / -Run / -Labels ("k=v,k=v"). Invalid values are rejected by RouteRequest validation."""
+    out: dict[str, Any] = {}
+    for hdr, key in (("x-modelspend-project", "project"), ("x-modelspend-agent", "agent"), ("x-modelspend-run", "run_id")):
+        v = headers.get(hdr)
+        if v:
+            out[key] = v
+    raw = headers.get("x-modelspend-labels")
+    if raw:
+        labels = {}
+        for part in raw.split(","):
+            if "=" not in part:
+                raise InvalidRequest("X-ModelSpend-Labels must look like key=value,key=value", param="x-modelspend-labels")
+            k, v = part.split("=", 1)
+            labels[k.strip()] = v.strip()
+        out["labels"] = labels
+    return out
+
+
+def _resolve_pin(model: str, catalog: Any) -> str:
+    """model='provider/id' or a bare catalog id -> 'provider/id' (observe-only: no routing)."""
+    if "/" in model:
+        return model
+    hits = [m.ref for m in (catalog.models if catalog is not None else []) if m.id == model]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        raise InvalidRequest(f"model '{model}' exists under several providers ({', '.join(hits)}); use 'provider/model-id'", param="model")
+    raise InvalidRequest(f"unknown model '{model}'. Use model='auto' to let ModelSpend choose, or 'provider/model-id' for a catalog model "
+                         "(observe-only: no routing, tokens and cost are still recorded).", param="model")
+
+
+def to_route_request(body: dict[str, Any], cfg: Config, headers: Any = None, catalog: Any = None) -> tuple[RouteRequest, bool]:
     """Translate an OpenAI-style body (+ `modelspend` extension) to a RouteRequest."""
     unsup = [k for k in body if k in UNSUPPORTED_PARAMS and body[k] not in (None, 1 if k == "n" else None)]
     if unsup:
@@ -67,9 +99,12 @@ def to_route_request(body: dict[str, Any], cfg: Config) -> tuple[RouteRequest, b
     unknown = [k for k in body if k not in KNOWN and k not in UNSUPPORTED_PARAMS]
     if unknown:
         raise InvalidRequest(f"unknown parameter '{unknown[0]}'", param=unknown[0])
-    if body.get("model") not in ("auto", "modelspend/auto"):
-        raise InvalidRequest("only model='auto' is supported; ModelSpend chooses the model. "
-                             "Pin providers/models via the `modelspend` extension (providers, allow_models).", param="model")
+    model = body.get("model")
+    pin = None
+    if model not in ("auto", "modelspend/auto"):
+        if not isinstance(model, str) or not model:
+            raise InvalidRequest("model is required: 'auto' or a catalog model ('provider/model-id')", param="model")
+        pin = _resolve_pin(model, catalog)
     if not isinstance(body.get("messages"), list):
         raise InvalidRequest("messages is required", param="messages")
     msgs = []
@@ -81,7 +116,12 @@ def to_route_request(body: dict[str, Any], cfg: Config) -> tuple[RouteRequest, b
                      "tool_calls": [{"id": t["id"], "name": t["function"]["name"], "arguments": t["function"]["arguments"]}
                                     for t in m.get("tool_calls") or []] or None})
     ext = dict(body.get("modelspend") or {})
-    kw: dict[str, Any] = {"messages": msgs, "providers": ext.pop("providers", None) or list(cfg.default_providers)}
+    kw: dict[str, Any] = {"messages": msgs, "providers": ext.pop("providers", None) or ([pin.split("/", 1)[0]] if pin else list(cfg.default_providers))}
+    if pin:
+        kw["pin"] = pin
+    # attribution precedence: `modelspend` body extension > X-ModelSpend-* headers > MODELSPEND_PROJECT / MODELSPEND_AGENT
+    kw.update({k: v for k, v in (("project", cfg.default_project), ("agent", cfg.default_agent)) if v})
+    kw.update(_tags_from_headers(headers) if headers is not None else {})
     mt = body.get("max_completion_tokens") or body.get("max_tokens")
     if mt:
         kw["max_output_tokens"] = mt
@@ -133,7 +173,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.1.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.2.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:
@@ -222,7 +262,7 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
 
     @app.post("/v1/chat/completions", dependencies=[Depends(auth), Depends(guard)])
     async def chat(request: Request):
-        req, stream = to_route_request(await _json(request), cfg)
+        req, stream = to_route_request(await _json(request), cfg, request.headers, engine.catalog)
         if not stream:
             return JSONResponse(completion_body(await engine.run(req)))
         agen = engine.stream(req)
@@ -255,7 +295,8 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
 
     @app.post("/v1/route", dependencies=[Depends(auth), Depends(guard)])
     async def route(request: Request):
-        req = RouteRequest(**_with_default_providers(await _json(request), cfg))
+        body = {**_tags_from_headers(request.headers), **(await _json(request))}  # body wins over headers
+        req = RouteRequest(**_with_default_providers(body, cfg))
         r = await engine.run(req)
         return JSONResponse(json.loads(r.model_dump_json()))
 
@@ -279,6 +320,30 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
     @app.get("/dashboard/data", dependencies=[Depends(auth), Depends(host_guard)])
     async def usage():
         return engine.store.summary() if engine.store else {"totals": {"n": 0}, "recent": []}
+
+    @app.get("/v1/usage/report", dependencies=[Depends(auth), Depends(host_guard)])
+    async def usage_report(request: Request):
+        """Tokens and cost grouped by project, agent, model, ... (`?by=project,agent&since=7d&project=billing`)."""
+        from ..report import FILTERS, ReportError, build_report, parse_since
+        q = request.query_params
+        known = {"by", "since", "until", "top", *FILTERS}
+        extra = [k for k in q if k not in known]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        try:
+            top = int(q.get("top", "200"))
+            if not 1 <= top <= 1000:
+                raise ValueError
+        except ValueError:
+            raise InvalidRequest("top must be an integer between 1 and 1000", param="top")
+        try:
+            return build_report(engine.store, [d.strip() for d in q.get("by", "project,agent,model").split(",") if d.strip()],
+                                filters={k: q[k] for k in FILTERS if q.get(k)}, since=parse_since(q.get("since", "30d")),
+                                until=parse_since(q.get("until")), limit=top)
+        except ReportError as e:
+            raise InvalidRequest(str(e))
 
     # ---------------- pricing sources and refresh (dashboard "Pricing" tab) ----------------
     def _sources_view() -> dict:

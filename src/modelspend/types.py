@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import Enum
 from typing import Any, Callable, Literal
 
@@ -49,6 +50,25 @@ class ToolSpec(BaseModel):
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+
+
+# ---- attribution tags -------------------------------------------------------------------
+# Tags say WHO made a call (project, agent, run). They are restricted to short identifier-like strings so request or prompt
+# text cannot end up in the store or in reports; they are attribution, not authorization.
+_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$")
+_LABEL_KEY = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+MAX_LABELS = 8
+
+
+def clean_tag(value: str | None, what: str, lower: bool = True) -> str | None:
+    if value is None:
+        return None
+    v = str(value).strip()
+    if not v:
+        return None
+    if not _TAG.match(v):
+        raise ValueError(f"{what} must be 1-64 characters: letters, digits and . _ : / - (no spaces); got {v[:20]!r}")
+    return v.lower() if lower else v
 
 
 class Message(BaseModel):
@@ -131,6 +151,45 @@ class RouteRequest(BaseModel):
     tools: list[ToolSpec] = Field(default_factory=list)
     tool_choice: str | None = None
     provider_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # attribution (who is spending): stored with the request and used by `modelspend report`
+    project: str | None = None
+    agent: str | None = None
+    run_id: str | None = None  # groups the calls of one agent run
+    labels: dict[str, str] = Field(default_factory=dict)
+    # observe-only: run exactly this "provider/model-id" (no routing, failover or escalation); tokens, cost and tags are still recorded
+    pin: str | None = None
+
+    @field_validator("project", "agent")
+    @classmethod
+    def _tag_lower(cls, v: str | None, info) -> str | None:
+        return clean_tag(v, info.field_name)
+
+    @field_validator("run_id")
+    @classmethod
+    def _run_id(cls, v: str | None) -> str | None:
+        return clean_tag(v, "run_id", lower=False)
+
+    @field_validator("labels")
+    @classmethod
+    def _labels(cls, v: dict[str, str]) -> dict[str, str]:
+        if len(v) > MAX_LABELS:
+            raise ValueError(f"at most {MAX_LABELS} labels")
+        out: dict[str, str] = {}
+        for k, val in v.items():
+            if not _LABEL_KEY.match(str(k)):
+                raise ValueError(f"label key {str(k)[:20]!r} must be 1-32 characters: lowercase letters, digits, underscore")
+            out[str(k)] = clean_tag(str(val), f"label '{k}'") or ""
+        return out
+
+    @field_validator("pin")
+    @classmethod
+    def _pin(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if "/" not in v:
+            raise ValueError("pin must be 'provider/model-id', e.g. 'anthropic/claude-haiku-5-5'")
+        prov, mid = v.split("/", 1)
+        return f"{normalize_provider(prov)}/{mid.strip()}"
 
     @field_validator("providers")
     @classmethod
@@ -153,6 +212,8 @@ class RouteRequest(BaseModel):
 
     @model_validator(mode="after")
     def _opts(self) -> "RouteRequest":
+        if self.pin and not self.providers:
+            self.providers = [self.pin.split("/", 1)[0]]
         for p in self.provider_options:
             if normalize_provider(p) not in self.providers:
                 raise ValueError(f"provider_options['{p}'] given for a provider that is not in the allowlist")
@@ -277,6 +338,11 @@ class RouteResult(BaseModel):
     catalog_version: str
     policy_version: str
     latency_ms: int = 0
+    project: str | None = None
+    agent: str | None = None
+    run_id: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
+    pinned: bool = False  # observe-only: the caller chose the model; no routing, failover or escalation
 
     def json_metadata(self) -> dict[str, Any]:
         return json.loads(self.model_dump_json(exclude={"text"}))

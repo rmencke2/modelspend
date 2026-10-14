@@ -89,17 +89,39 @@ def _tok_line(u, total: int) -> str:
     return f"in {u.input_tokens + u.cache_read_tokens + u.cache_write_tokens}{cached} | out {u.output_tokens}{reason} | total {total}"
 
 
+PROJECT = typer.Option(None, "--project", envvar="MODELSPEND_PROJECT", help="Attribute this call to a project (see `modelspend report`).")
+AGENT = typer.Option(None, "--agent", envvar="MODELSPEND_AGENT", help="Attribute this call to an agent.")
+RUN_ID = typer.Option(None, "--run-id", help="Group several calls into one agent run.")
+LABEL = typer.Option(None, "--label", help="Extra tag as key=value (repeatable, max 8), e.g. --label env=prod.")
+PIN = typer.Option(None, "--model", help="Observe-only: run exactly this 'provider/model-id' with no routing, failover or escalation; tokens and cost are still recorded.")
+
+
+def _labels(items: Optional[list[str]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for it in items or []:
+        if "=" not in it:
+            raise typer.BadParameter(f"--label expects key=value, got {it!r}")
+        k, v = it.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
 def _request(prompt: Optional[str], providers: Optional[str], profile: str, budget: Optional[float], max_out: Optional[int],
              task_type: Optional[str], schema: Optional[Path], system: Optional[str], hard: bool, cfg: Config,
-             budget_tokens: Optional[int] = None, allow_unpriced: bool = False) -> RouteRequest:
+             budget_tokens: Optional[int] = None, allow_unpriced: bool = False,
+             project: Optional[str] = None, agent: Optional[str] = None, run_id: Optional[str] = None,
+             label: Optional[list[str]] = None, pin: Optional[str] = None) -> RouteRequest:
     if prompt is None or prompt == "-":
         prompt = sys.stdin.read()
     msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    if pin and not providers:
+        providers = pin.split("/", 1)[0] if "/" in pin else None  # a pinned model implies its provider
     return RouteRequest(
         messages=msgs, providers=_providers(providers, cfg), profile=profile, max_budget_usd=budget, max_output_tokens=max_out,
         max_budget_tokens=budget_tokens, allow_unpriced=allow_unpriced or cfg.allow_unpriced,
         task_type=TaskCategory(task_type) if task_type else None, hard=hard,
-        response_schema=json.loads(schema.read_text()) if schema else None)
+        response_schema=json.loads(schema.read_text()) if schema else None,
+        project=project, agent=agent, run_id=run_id, labels=_labels(label), pin=pin)
 
 
 @app.command()
@@ -110,6 +132,7 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
             system: Optional[str] = None, hard: bool = False, budget_tokens: Optional[int] = typer.Option(None, help="Max TOTAL tokens (input+output) across all attempts."),
             allow_unpriced: bool = typer.Option(False, help="Include models with no catalog pricing; cost is shown as unknown, tokens still tracked."),
             assume_keys: bool = typer.Option(False, help="Plan as if keys exist for the allowlisted providers (no calls are made either way)."),
+            model: Optional[str] = PIN,
             catalog: Optional[str] = CAT, as_json: bool = typer.Option(False, "--json")):
     """Estimate candidates and costs without making any generation call."""
     cfg = Config.from_env()
@@ -120,7 +143,8 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
     eng = Engine(cat, cfg, {}, None)
     eng.router.available = set(cfg.api_keys)
     try:
-        plan = asyncio.run(eng.plan(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced)))
+        plan = asyncio.run(eng.plan(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced,
+                                             pin=model)))
     except ModelSpendError as e:
         plan = e.details.get("plan")
         if plan is None or as_json is False:
@@ -154,12 +178,15 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
           system: Optional[str] = None, hard: bool = False, catalog: Optional[str] = CAT,
           budget_tokens: Optional[int] = typer.Option(None, help="Max TOTAL tokens (input+output) across all attempts."),
           allow_unpriced: bool = typer.Option(False, help="Allow models with no catalog pricing; cost is shown as unknown."),
+          project: Optional[str] = PROJECT, agent: Optional[str] = AGENT, run_id: Optional[str] = RUN_ID,
+          label: Optional[list[str]] = LABEL, model: Optional[str] = PIN,
           as_json: bool = typer.Option(False, "--json")):
     """Route a task to a model and run it (spends money with your API keys)."""
     cfg = Config.from_env()
     eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
     try:
-        res = asyncio.run(eng.run(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced)))
+        res = asyncio.run(eng.run(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced,
+                                                 project, agent, run_id, label, model)))
     except ModelSpendError as e:
         _fail(e)
     if as_json:
@@ -247,6 +274,32 @@ def usage(limit: int = 10):
         for r in rows:
             cost = _usd(r["cost"]) if r["cost"] is not None else "unknown"
             typer.echo(f"  {r[key]:<34}{r['n']:>5} {r['input_tokens']:>10} {r['output_tokens']:>9} tok | {cost}")
+
+
+@app.command()
+def report(by: str = typer.Option("project,agent,model", "--by", help="Group by up to 4 of: project, agent, run, provider, model, task, profile, day, purpose, label.<name>."),
+           since: str = typer.Option("30d", help="Window: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+           project: Optional[str] = typer.Option(None, help="Only this project ('(untagged)' for calls without one)."),
+           agent: Optional[str] = typer.Option(None, help="Only this agent."), run: Optional[str] = typer.Option(None, help="Only this run id."),
+           provider: Optional[str] = None, model: Optional[str] = typer.Option(None, help="Only this model, as provider/model-id."),
+           task: Optional[str] = None, top: int = typer.Option(50, help="Maximum number of groups to show."),
+           fmt: str = typer.Option("table", "--format", help="table, csv or json.")):
+    """Tokens and cost per project, agent and model (metadata only; no prompts are stored).
+
+    Only calls made through ModelSpend are counted. Tokens are provider-reported; cost uses the prices in effect when each call ran.
+    """
+    from .report import ReportError, build_report, parse_since, to_csv, to_table
+    if fmt not in ("table", "csv", "json"):
+        raise typer.BadParameter("--format must be table, csv or json")
+    cfg = Config.from_env()
+    store = Store(cfg.db_path)  # type: ignore[arg-type]
+    filters = {k: v for k, v in (("project", project), ("agent", agent), ("run", run), ("provider", provider), ("model", model), ("task", task)) if v}
+    try:
+        rep = build_report(store, [d.strip() for d in by.split(",") if d.strip()], filters=filters, since=parse_since(since), limit=top)
+    except ReportError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_csv(rep) if fmt == "csv" else to_table(rep))
 
 
 @app.command()

@@ -1,6 +1,11 @@
 # ModelSpend
 
-An open-source router that picks **the lowest-cost AI model expected to suit each task**, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini) and xAI (Grok). Python SDK, CLI, local FastAPI server with an OpenAI-compatible `/v1/chat/completions` (`model="auto"`), route preview, and an evaluation harness.
+Open-source cost control for LLM usage, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini) and xAI (Grok). Two halves that work together:
+
+1. **Know where the money goes.** Tag calls with a project and an agent, and see **tokens and cost per project, per agent, per model** (including what retries and escalations cost). Works even if you do not want routing: pin a model and ModelSpend only measures. See [docs/cost-attribution.md](docs/cost-attribution.md).
+2. **Spend less.** Route each task to **the lowest-cost model expected to suit it**, inside a token and dollar budget that covers every retry and escalation.
+
+Python SDK, CLI, a local FastAPI server with an OpenAI-compatible `/v1/chat/completions` (`model="auto"` to route, or a pinned model to just measure), route preview, a usage dashboard and an evaluation harness.
 
 > **Honest status (v0.1, MVP).**
 > - ModelSpend does **not** guarantee the cheapest successful model. "Suitable" is an *estimate* from catalog tier priors and, as you run evaluations, measured evidence.
@@ -8,6 +13,7 @@ An open-source router that picks **the lowest-cost AI model expected to suit eac
 > - **Tokens first.** Token usage (input, cached, output, reasoning) is exact, provider-reported and summed over every attempt; it is the headline number in the CLI, API and dashboard. Cost is derived from it and shown as `unknown` for models without a price (`--allow-unpriced`). Budgets can be set in tokens (`--budget-tokens`) as well as dollars.
 > - **Verified live (2026-10-12): Anthropic** — model sync, routing, one-step escalation, token budgets, streaming and the dashboard, with token counts and cost checked against the provider's reported usage. **Verified live (2026-10-12): OpenAI, partially** — chat and streaming calls on `gpt-4.1-nano` and `gpt-5-mini`: routing, catalog sync, token counts (the pre-call input estimate matched the provider's count exactly, and reasoning tokens arrive inside the output count), provider-reported usage in the stream, and cost computed from the catalog prices. **Not yet exercised live for OpenAI:** strict structured output, failover on a bad key, cross-vendor escalation, and a comparison against the provider's billing page. The **Gemini and xAI adapters are implemented with the official SDKs but tested only against recorded-shape fakes**, not yet live ([docs/limitations.md](docs/limitations.md)). Reports from people running them are welcome.
 > - Savings figures exist only as measured output of `modelspend eval`; mock runs are labelled **SIMULATED** and are not benchmarks.
+> - **New in 0.2.0b1: per-project / per-agent reporting.** Tested with mocked providers; its numbers have not yet been compared against the providers' own usage pages, and only calls made through ModelSpend are counted ([docs/cost-attribution.md](docs/cost-attribution.md)).
 
 ## Five-minute quickstart (no API keys needed)
 
@@ -130,6 +136,15 @@ modelspend models list --provider openai
    modelspend serve
    ```
 
+## Cost per project and agent
+
+```bash
+modelspend route "Classify: I was charged twice" --providers anthropic --project billing --agent invoice-bot
+modelspend report --by project,agent,model --since 7d
+```
+
+Tag calls from the SDK (`ModelSpend(project=..., agent=...)`) or any OpenAI client (`X-ModelSpend-Project` / `X-ModelSpend-Agent` headers). To measure an existing agent **without routing it**, pin a model (`--model provider/id`, or `model="provider/id"` on the server). The report shows tokens by type, cost, and the overhead spent on attempts that did not produce the final answer; CSV and JSON output are available. Full guide, definitions and limits: [docs/cost-attribution.md](docs/cost-attribution.md).
+
 ## SDK
 
 ```python
@@ -167,7 +182,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
