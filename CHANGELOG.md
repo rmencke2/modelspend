@@ -4,6 +4,7 @@
 
 - Fix: the overhead tile and report showed overhead cost as "unknown" when there were no overhead calls; it is now $0.
 - Fix: the daily chart repeated the same date on its x-axis for a one-day window.
+- Provider failover on a bad key was verified live (OpenAI `auth` error -> not retried -> Anthropic answered; the key did not appear in the output).
 - The Costs tab was checked on live data (tokens by agent and by model each add up to the headline total).
 
 ## 0.3.0b1
