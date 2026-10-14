@@ -1,6 +1,6 @@
 # Cost attribution: tokens and cost per project and per agent
 
-*Reporting (0.2) was checked live against Anthropic and OpenAI usage. The dashboard Costs tab and budgets (0.3) are tested with mocked providers and a real browser, but not yet exercised against live providers (see [roadmap](roadmap-cost-attribution.md)).*
+*Reporting (0.2) was checked live against Anthropic and OpenAI usage. Budgets (0.3) were verified live on OpenAI from the CLI (hard refusal before the call, soft warning). The dashboard Costs tab is tested with mocked providers and a real browser; concurrent enforcement is tested with threads, not live (see [roadmap](roadmap-cost-attribution.md)).*
 
 ModelSpend does two things: it **routes** each task to a suitable low-cost model, and it **shows where your tokens and money go**.
 This page is about the second. You do not have to use routing to get it.
@@ -106,7 +106,7 @@ day or month**, in USD and/or tokens.
   checks *spent so far + calls in flight + this call's worst case*. If a hard limit would be exceeded the call is **not made** and you get
   HTTP 429 `period_budget_exceeded` (CLI/SDK: `PeriodBudgetExceeded`) naming the budget, the amounts and when it resets. If a later
   escalation would not fit, the earlier answer is returned with the reason instead of an error.
-- **Soft:** never refuses. The result carries `budget_warnings` (at 80% and when over) and `modelspend budget list` shows the state.
+- **Soft:** never refuses. The result carries `budget_warnings` (at 80% of the limit and when over, judged on what has actually been spent, including this call) and `modelspend budget list` shows the state.
 - **Atomic:** the check and the reservation happen in one SQLite write transaction, so several threads or processes sharing the same
   usage database cannot jointly overshoot a limit. A call in flight holds its worst case; the hold shrinks to what was really spent after
   each call and is dropped when the request ends. A hold left by a crashed process expires after 15 minutes.

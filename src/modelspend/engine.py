@@ -426,7 +426,14 @@ class Engine:
             catalog_version=plan.catalog_version, policy_version=plan.policy_version,
             latency_ms=int((time.monotonic() - t0) * 1000),
             project=req.project, agent=req.agent, run_id=req.run_id, labels=dict(req.labels), pinned=req.pin is not None,
-            budget_warnings=list(ledger.guard.warnings) if ledger.guard is not None else [])
+            budget_warnings=self._soft_warnings(ledger))
+
+    @staticmethod
+    def _soft_warnings(ledger: Ledger) -> list[str]:
+        if ledger.guard is None:
+            return []
+        ledger.guard.soft_check(ledger.used, ledger.tokens_used)
+        return list(ledger.guard.warnings)
 
     def _record_failure(self, plan: Plan, ledger: Ledger, est: float, req: RouteRequest, t0: float, code: str) -> None:
         if self.store:

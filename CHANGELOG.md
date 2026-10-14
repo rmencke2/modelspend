@@ -14,7 +14,8 @@
 - The usage database now uses WAL mode so reports never block writers.
 - Fix: when an escalation could not run because of a budget, the earlier answer is now returned as `validation_failed` with
   `escalations: 0` (it used to be reported as `ok`).
-- Not yet verified against live providers; the concurrency guarantee is tested with threads on one machine, not across machines or network file systems.
+- Soft budget warnings are based on actual spend (they no longer fire on a call's worst-case projection).
+- Verified live on OpenAI (CLI): hard budget accounting and refusal before the call, soft budget warning. The dashboard Costs tab and concurrent enforcement are not yet verified live; the concurrency guarantee is tested with threads on one machine, not across machines or network file systems.
 
 ## 0.2.0b1 - unreleased
 

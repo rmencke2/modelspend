@@ -1,6 +1,6 @@
 # Roadmap: cost attribution per project and per agent
 
-Status: 0.2 is built and its numbers were checked live against Anthropic and OpenAI. 0.3 (dashboard Costs tab, per-agent budgets, retention) is built and tested with mocked providers; it has not been exercised live. 0.4 is intention, not promise.
+Status: 0.2 is built and its numbers were checked live against Anthropic and OpenAI. 0.3 (dashboard Costs tab, per-agent budgets, retention) is built; hard and soft budgets were verified live on OpenAI from the CLI, the Costs tab is browser-tested with mocked data. 0.4 is intention, not promise.
 
 ModelSpend has two pillars:
 

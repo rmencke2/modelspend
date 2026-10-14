@@ -211,19 +211,16 @@ class BudgetGuard:
             try:
                 db.execute("delete from budget_holds where ts < ?", (now - HOLD_TTL_S,))
                 for b in self.budgets:
+                    if b.mode == "soft":
+                        continue  # soft budgets never refuse; they are evaluated on actual spend by soft_check()
                     start, resets = window(b.period, now)
                     usd, tok, _ = _committed(self.store, b, start)
                     h_usd, h_tok = _held(self.store, b, now, exclude=self.hold_id)
                     over = self._exceeds(b, usd + h_usd + proposed_usd, tok + h_tok + proposed_tok, worst_usd)
                     if over is None:
-                        if b.mode == "soft":
-                            self._note_soft(b, usd + h_usd + base_usd, tok + h_tok + base_tokens)
                         continue
                     msg = (f"{b.period} {b.mode} budget for {b.label} {over[0]} (resets {_iso(resets)}). "
                            f"{over[1]} Change it with `modelspend budget set`, or wait for the reset.")
-                    if b.mode == "soft":
-                        self._warn(f"{b.period} soft budget for {b.label} {over[0]}")
-                        continue
                     db.rollback()
                     return Violation(b, msg, {"budget_id": b.id, "scope": b.label, "period": b.period, "mode": b.mode,
                                               "limit_usd": b.limit_usd, "limit_tokens": b.limit_tokens, "spent_usd": usd,
@@ -250,11 +247,23 @@ class BudgetGuard:
             return ("would be exceeded", f"Spent plus in-flight plus this call's worst case is {tok:,} tokens against a {b.limit_tokens:,} limit.")
         return None
 
-    def _note_soft(self, b: Budget, usd: float, tok: int) -> None:
-        pct = max([p for p in ((usd / b.limit_usd) if b.limit_usd else None, (tok / b.limit_tokens) if b.limit_tokens else None) if p is not None],
-                  default=0.0)
-        if pct >= WARN_AT:
-            self._warn(f"{b.period} soft budget for {b.label} is at {pct:.0%}")
+    def soft_check(self, spent_usd: float, spent_tokens: int) -> None:
+        """Warnings for soft budgets, from ACTUAL spend: everything recorded in the window, other requests' in-flight spend, and what
+        this request has spent. (Not the worst-case projection that hard budgets use: that would warn about calls that turn out cheap.)"""
+        now = time.time()
+        with self.store.lock:
+            for b in self.budgets:
+                if b.mode != "soft":
+                    continue
+                usd, tok, _ = _committed(self.store, b, window(b.period, now)[0])
+                h_usd, h_tok = _held(self.store, b, now, exclude=self.hold_id)
+                pcts = [p for p in (((usd + h_usd + spent_usd) / b.limit_usd) if b.limit_usd else None,
+                                    ((tok + h_tok + spent_tokens) / b.limit_tokens) if b.limit_tokens else None) if p is not None]
+                pct = max(pcts, default=0.0)
+                if pct >= 1.0:
+                    self._warn(f"{b.period} soft budget for {b.label} is over its limit ({pct:.0%} used)")
+                elif pct >= WARN_AT:
+                    self._warn(f"{b.period} soft budget for {b.label} is at {pct:.0%}")
 
     def _warn(self, text: str) -> None:
         if text not in self.warnings:

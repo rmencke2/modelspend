@@ -121,10 +121,19 @@ async def test_soft_budget_never_refuses_but_warns(engine_factory, store):
     eng, ad = engine_factory({"openai": lambda r, n: resp("positive", 100, 1000)})
     res = await eng.run(R(project="shop"))
     assert res.status == "ok" and len(ad["openai"].calls) == 1
-    assert any("soft budget" in w and "project shop" in w for w in res.budget_warnings)
+    assert any("soft budget" in w and "project shop" in w and "over its limit" in w for w in res.budget_warnings)
     res2 = await eng.run(R(project="shop"))
     assert res2.status == "ok" and res2.budget_warnings  # still not refused, still warned
     assert status(store)[0]["state"] == "over"
+
+
+async def test_soft_budget_does_not_warn_about_a_cheap_call_that_merely_had_a_big_worst_case(engine_factory, store):
+    # seen live: 73 of 150 tokens spent, worst case of the next call 98, actual 30 -> 103 of 150 (69%) is not a warning
+    set_budget(store, agent="bot", period="daily", limit_tokens=150, mode="soft")
+    eng, _ = engine_factory({"openai": lambda r, n: resp("positive", 12, 18)})
+    for _ in range(2):
+        res = await eng.run(R(agent="bot", max_output_tokens=64))
+    assert res.budget_warnings == [] and status(store)[0]["spent_tokens"] == 60  # 2 x 30 tokens = 40% of 150
 
 
 async def test_soft_budget_warns_when_approaching(engine_factory, store):
@@ -132,7 +141,7 @@ async def test_soft_budget_warns_when_approaching(engine_factory, store):
     eng, _ = engine_factory({"openai": lambda r, n: resp("positive", 4000, 4500)})  # 8,500 of 10,000 = 85%
     await eng.run(R(project="shop"))
     res = await eng.run(R(project="shop", max_output_tokens=64))
-    assert any("at 8" in w or "at 9" in w or "exceed" in w for w in res.budget_warnings), res.budget_warnings
+    assert any("is at" in w or "over its limit" in w for w in res.budget_warnings), res.budget_warnings
 
 
 async def test_hard_usd_limit_refuses_an_unpriced_model_but_a_token_limit_allows_it(catalog, cfg, store):
