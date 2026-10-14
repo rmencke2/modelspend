@@ -54,6 +54,7 @@ METRICS = f"""
   sum(a.cost) as cost,
   sum(case when a.cost is null then 1 else 0 end) as unpriced_attempts,
   sum(case when a.cost_basis = 'uncertain_upper_estimate' then 1 else 0 end) as uncertain_attempts,
+  coalesce(sum(case when {_FINAL} then 0 else 1 end), 0) as overhead_attempts,
   coalesce(sum(case when {_FINAL} then 0 else {_TOK} end), 0) as overhead_tokens,
   sum(case when {_FINAL} then null else a.cost end) as overhead_cost
 """
@@ -116,7 +117,9 @@ def _where(filters: dict[str, str], since: float | None, until: float | None) ->
 
 def _finish(row: dict[str, Any]) -> dict[str, Any]:
     if not row["attempts"]:  # nothing recorded: the sums are SQL NULLs, but the honest answer is zero
-        row["cost"], row["overhead_cost"] = 0.0, 0.0
+        row["cost"] = 0.0
+    if not row["overhead_attempts"]:  # no overhead calls at all is $0, not "unknown" (unknown means overhead calls without a price)
+        row["overhead_cost"] = 0.0
     row["cost_complete"] = not row["unpriced_attempts"]
     t = row["total_tokens"] or 0
     row["overhead_token_share"] = (row["overhead_tokens"] / t) if t else 0.0

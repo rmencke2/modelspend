@@ -208,6 +208,23 @@ def test_overhead_when_a_later_attempt_fails_after_an_earlier_answer(store):
     assert row["total_tokens"] == 110 and row["overhead_tokens"] == 0 and row["overhead_cost"] == pytest.approx(0.002)
 
 
+def test_no_overhead_calls_means_zero_overhead_cost_not_unknown(store):
+    # seen live: one clean call per request -> overhead cost was NULL and the dashboard said "unknown"
+    _seed(store)
+    clean = build_report(store, ["project"], filters={"project": "billing"}, since=None)["rows"][0]
+    assert clean["overhead_attempts"] == 1 and clean["overhead_cost"] == pytest.approx(0.001)  # r2's superseded answer
+    store2 = Store(":memory:")
+    class A:
+        index, kind, purpose, provider, model, outcome, error_kind = 0, "generation", "initial", "openai", "m", "ok", None
+        usage = Usage(input_tokens=10, output_tokens=5)
+        estimated_cost_usd = cost_usd = 0.001
+        cost_basis, latency_ms = "reported_usage", 1
+    store2.record_row("only", "balanced", "classification", "rules", "openai", "m", "ok", "x", 0, 0, 0, 0.001, 0.001, 0, None, 0, 0, 1, "c", "p", [A()],
+                      tags={"project": "p"})
+    t = build_report(store2, [], since=None)["totals"]
+    assert t["overhead_attempts"] == 0 and t["overhead_cost"] == 0.0 and t["overhead_tokens"] == 0
+
+
 def test_report_filters_since_and_labels(store):
     _seed(store)
     week = {r["project"] for r in build_report(store, ["project"], since=parse_since("7d"))["rows"]}

@@ -1,6 +1,6 @@
 # Cost attribution: tokens and cost per project and per agent
 
-*Reporting (0.2) was checked live against Anthropic and OpenAI usage. Budgets (0.3) were verified live on OpenAI from the CLI (hard refusal before the call, soft warning). The dashboard Costs tab is tested with mocked providers and a real browser; concurrent enforcement is tested with threads, not live (see [roadmap](roadmap-cost-attribution.md)).*
+*Reporting (0.2) was checked live against Anthropic and OpenAI usage. Budgets (0.3) were verified live on OpenAI from the CLI (hard refusal before the call, soft warning). The dashboard Costs tab was checked on live data (per-agent and per-model totals add up to the headline); the budget form is tested in a browser with generated data, and concurrent enforcement is tested with threads, not live (see [roadmap](roadmap-cost-attribution.md)).*
 
 ModelSpend does two things: it **routes** each task to a suitable low-cost model, and it **shows where your tokens and money go**.
 This page is about the second. You do not have to use routing to get it.

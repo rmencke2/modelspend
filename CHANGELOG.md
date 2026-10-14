@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.3.0b1 - unreleased
+## Unreleased (after 0.3.0b1)
+
+- Fix: the overhead tile and report showed overhead cost as "unknown" when there were no overhead calls; it is now $0.
+- Fix: the daily chart repeated the same date on its x-axis for a one-day window.
+- The Costs tab was checked on live data (tokens by agent and by model each add up to the headline total).
+
+## 0.3.0b1
 
 - **Dashboard Costs tab.** Hero token count, cost, overhead, cache hit rate and unpriced-call tiles; tokens by project / agent / model /
   provider / task / purpose as stacked bars (input, cached, output); tokens per day; a details table; one filter row (window, group by,

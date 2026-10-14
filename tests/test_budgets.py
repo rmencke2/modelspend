@@ -411,6 +411,7 @@ def test_dashboard_has_the_costs_tab_and_loads_nothing_external(catalog, cfg, st
     for needle in ('id="nav-costs"', 'id="costs"', 'id="c-bars"', 'id="c-days"', 'id="c-budgets"', 'id="b-add"', "/v1/usage/report", "/v1/budgets"):
         assert needle in html, needle
     assert 'src="http' not in html and "<link" not in html and "@import" not in html  # fully self-contained: no CDN, no tracking
+    assert "new Set([days[0]" in html  # a one-day window shows one x label, not the same date three times
     assert "innerHTML" in html and "const esc=" in html  # dynamic strings go through esc(); tooltips use textContent
 
 
