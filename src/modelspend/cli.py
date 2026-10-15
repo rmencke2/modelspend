@@ -37,6 +37,8 @@ alias_app = typer.Typer(no_args_is_help=True, help="Name the model you want for 
 app.add_typer(alias_app, name="alias")
 budget_app = typer.Typer(no_args_is_help=True, help="Spending limits per project and/or agent (daily or monthly, in USD and/or tokens).")
 app.add_typer(budget_app, name="budget")
+reconcile_app = typer.Typer(no_args_is_help=True, help="Compare ModelSpend's usage with what the provider reports (import an export you download yourself).")
+app.add_typer(reconcile_app, name="reconcile")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(keys_app, name="keys")
 app.add_typer(providers_app, name="providers")
@@ -491,6 +493,80 @@ def budget_remove(budget_id: int):
         typer.echo(f"no budget #{budget_id}", err=True)
         raise typer.Exit(2)
     typer.echo(f"removed budget #{budget_id}")
+
+
+@reconcile_app.command("import")
+def reconcile_import(file: Path = typer.Argument(..., help="Usage export from the provider: CSV, JSON or JSON lines."),
+                     provider: Optional[str] = typer.Option(None, help="openai, anthropic, google or xai (or put a 'provider' column in the file)."),
+                     source: Optional[str] = typer.Option(None, help="Name for this import (default: the file name). Importing the same name again replaces it."),
+                     map_: Optional[list[str]] = typer.Option(None, "--map", help="Column mapping field=column, e.g. --map day=Date --map cost=Amount. Fields: day, model, input_tokens, output_tokens, cache_read, cache_write, requests, cost.")):
+    """Read a provider usage export into ModelSpend's database (numbers only; no text from the file is stored)."""
+    from .reconcile import ReconcileError, import_file
+    mapping = {}
+    for m in map_ or []:
+        k, _, v = m.partition("=")
+        if not v:
+            raise typer.BadParameter(f"--map needs field=column, got {m!r}")
+        mapping[k.strip()] = v.strip()
+    try:
+        r = import_file(_store(), file, provider.lower() if provider else None, source, mapping)
+    except ReconcileError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"imported {r['rows']} rows as '{r['source']}': {', '.join(r['providers'])}, {r['models']} model(s), {r['first_day']}..{r['last_day']}"
+               + ("" if r["has_cost"] else "  (no cost column: only tokens can be compared)"))
+    if r["overlap"]:
+        days = ", ".join(f"{o['provider']} {o['day']}" for o in r["overlap"][:5])
+        typer.echo(f"warning: another import already covers some of these days ({days}{'...' if len(r['overlap']) > 5 else ''}); "
+                   "comparing adds imports together and would double count. Use --source on `reconcile run`, or `reconcile remove` one.", err=True)
+    typer.echo("next: modelspend reconcile run")
+
+
+@reconcile_app.command("run")
+def reconcile_run(by_day: bool = typer.Option(False, "--by-day", help="One row per model per day (days are UTC; calls near midnight can land on different days)."),
+                  tolerance: float = typer.Option(0.02, help="Allowed difference as a fraction of the provider's number (0.02 = 2%)."),
+                  exclusive: bool = typer.Option(False, "--exclusive", help="The exported key/project is used only by ModelSpend: flag provider-higher differences too."),
+                  source: Optional[str] = typer.Option(None, help="Only this import."), provider: Optional[str] = None,
+                  cached_separate: Optional[list[str]] = typer.Option(None, help="Provider whose input-token column excludes cached tokens (default: anthropic only). Repeatable."),
+                  cached_included: Optional[list[str]] = typer.Option(None, help="Provider whose input-token column includes cached tokens (default: openai, google, xai). Repeatable."),
+                  fmt: str = typer.Option("table", "--format", help="table, csv or json."),
+                  check: bool = typer.Option(False, "--check", help="Exit with status 1 when any row needs a look (for cron/CI).")):
+    """Compare ModelSpend's tokens and cost with the provider's, per model, over the days the export covers."""
+    from .reconcile import ReconcileError, compare, to_csv, to_table
+    if fmt not in ("table", "csv", "json"):
+        raise typer.BadParameter("--format must be table, csv or json")
+    over = {**{p.lower(): False for p in cached_separate or []}, **{p.lower(): True for p in cached_included or []}}
+    try:
+        rep = compare(_store(), by_day=by_day, tolerance=tolerance, exclusive=exclusive, source=source,
+                      provider=provider.lower() if provider else None, cached_included=over)
+    except ReconcileError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_csv(rep) if fmt == "csv" else to_table(rep))
+    if check and not rep["summary"]["ok"]:
+        raise typer.Exit(1)
+
+
+@reconcile_app.command("list")
+def reconcile_list():
+    """Show what has been imported."""
+    from .reconcile import list_sources
+    rows = list_sources(_store())
+    if not rows:
+        typer.echo("nothing imported yet: modelspend reconcile import <file> --provider <name>")
+    for r in rows:
+        typer.echo(f"{r['source']}  {r['provider']}  {r['first_day']}..{r['last_day']}  {r['rows']} rows  {r['tokens']:,} tokens")
+
+
+@reconcile_app.command("remove")
+def reconcile_remove(source: str):
+    """Delete one import."""
+    from .reconcile import remove_source
+    n = remove_source(_store(), source)
+    if not n:
+        typer.echo(f"error: no import named {source!r}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"removed {n} rows from '{source}'")
 
 
 @app.command()

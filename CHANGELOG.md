@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0b1 - unreleased
+
+- **Usage reconciliation.** `modelspend reconcile import <file> --provider <name>` reads a usage export you download from the provider (CSV, JSON or JSON lines; numbers only),
+  and `modelspend reconcile run` compares tokens and cost per model with ModelSpend's own records over the days the export covers (`--by-day`, `--tolerance`, `--exclusive`,
+  `--check` for a non-zero exit, `--format table|csv|json`). It flags ModelSpend recording *more* than the provider billed; provider-higher is normal unless the key is exclusive.
+  Cached-token semantics are per provider and overridable; model snapshot suffixes are merged; re-importing a source replaces it and overlapping imports warn. The file formats are
+  based on documentation, not yet checked against real exports. See docs/reconcile.md.
+- **Fix: first use from two processes on one database could crash after the provider call.** `Store.salt()` selected then inserted, so two processes both seeing "no salt yet" made the
+  second fail with `UNIQUE constraint failed: meta.k` (surfaced as a flaky concurrent-budget test, about 1 run in 6). It now keeps whichever salt won. Regression test included.
+
 ## 0.5.0b2 - 2026-10-15
 
 - **Fix: second sync call failed with `Event loop is closed`.** `ModelSpend.route/preview/stream` ran each call on a fresh `asyncio.run()` loop, but provider

@@ -31,6 +31,9 @@ create table if not exists budgets(
   mode text, created_ts real);
 create unique index if not exists budgets_scope on budgets(coalesce(project, ''), coalesce(agent, ''), period);
 create table if not exists conversations(key text primary key, model text, category text, ts real);
+create table if not exists provider_usage(
+  source text, provider text, model text, day text, input_tokens int, output_tokens int, cache_read int, cache_write int,
+  requests int, cost real, imported_ts real, primary key(source, provider, model, day));
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
@@ -74,9 +77,10 @@ class Store:
         if r:
             return bytes(r[0])
         s = secrets.token_bytes(32)
-        self.db.execute("insert into meta values('salt', ?)", (s,))
+        # another process sharing this database may have created the salt since the select above: keep whichever row won
+        self.db.execute("insert or ignore into meta values('salt', ?)", (s,))
         self.db.commit()
-        return s
+        return bytes(self.db.execute("select v from meta where k='salt'").fetchone()[0])
 
     def get_class(self, key: str) -> str | None:
         r = self.db.execute("select category from class_cache where key=?", (key,)).fetchone()

@@ -158,6 +158,15 @@ A hard budget refuses a call *before* it is sent if its worst case would exceed 
 
 Full guide, definitions and limits: [docs/cost-attribution.md](docs/cost-attribution.md).
 
+**Check ModelSpend's numbers against the provider's (0.6).** Download a usage export from the provider, then:
+
+```bash
+modelspend reconcile import openai-usage.csv --provider openai
+modelspend reconcile run
+```
+
+It compares tokens and cost per model over the days the export covers and flags where ModelSpend recorded *more* than the provider billed. The provider's invoice stays authoritative. Guide and limits (including that the file formats are not yet verified against real exports): [docs/reconcile.md](docs/reconcile.md).
+
 ## Pick the model yourself, or keep a chat on one model (0.4)
 
 ```bash
@@ -221,7 +230,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Reconciling with provider usage](docs/reconcile.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

@@ -175,7 +175,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.5.0b2", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.6.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:

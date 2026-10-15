@@ -251,3 +251,20 @@ def test_sync_calls_reuse_one_event_loop(catalog, cfg):
         assert ms.route("Classify this").status == "ok"
     assert list(ms.stream("Rewrite this"))[-1].type == "done"
     assert len({id(x) for x in seen}) == 1
+
+
+def test_salt_survives_another_process_creating_it_first(tmp_path, monkeypatch):
+    """Two processes sharing one database can both see 'no salt yet'; the loser must adopt the winner's salt, not crash after the provider call."""
+    from modelspend import store as store_mod
+    from modelspend.store import Store
+    path = tmp_path / "salt.db"
+    mine, rival = Store(path), Store(path)
+    real = store_mod.secrets.token_bytes
+
+    def racing(n):
+        monkeypatch.setattr(store_mod.secrets, "token_bytes", real)
+        rival.salt()  # the other process wins the race between our select and our insert
+        return real(n)
+
+    monkeypatch.setattr(store_mod.secrets, "token_bytes", racing)
+    assert mine.salt() == rival.salt() == Store(path).salt()
