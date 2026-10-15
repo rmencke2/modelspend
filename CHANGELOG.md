@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.5.0b1 - unreleased
+## 0.5.0b2 - unreleased
 
 - **Fix: second sync call failed with `Event loop is closed`.** `ModelSpend.route/preview/stream` ran each call on a fresh `asyncio.run()` loop, but provider
   SDK clients are cached and stay bound to the first loop, so any script making two sync calls on one object failed (found in the OpenAI structured-output live test, which then passed live for both strict and non-strict schemas).
   Sync calls now share one background loop. Regression test included. The async API and the CLI/server were not affected.
+- Verified live: OpenAI structured output (`response_schema`), strict and non-strict, on `gpt-4.1-nano`.
+
+## 0.5.0b1
+
 - **Your own evidence bars.** `modelspend thresholds set|list|remove`: per task category (or `*`) set how many eval cases a model needs (`min_n`),
   the pass rate it must show (`min_pass_rate`), whether that is judged on the conservative 95% Wilson lower bound (default) or the observed rate (`basis`),
   and whether a model may be chosen on its tier prior alone (`require_evidence`). Resolved field by field: category, then `*`, then the profile. A setting can
