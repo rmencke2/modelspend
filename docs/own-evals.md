@@ -1,6 +1,6 @@
 # Your own evals and evidence bars (0.5)
 
-*Tested with mocked providers and unit tests. A live run on real models has not been done yet.*
+*Tested with unit tests, and run live once at small scale: 7 models on 12 simple classification cases cost about $0.02, the evidence table and a route using the measured verdict worked. Every model passed every case, so that run did not show models being told apart: use cases where a cheaper model can plausibly fail.*
 
 Public benchmarks rarely match your prompts: a cheaper model often handles *your* task as well as an expensive one, and sometimes
 worse. ModelSpend lets you settle that with your own cases, and set **how much proof you require** before it picks a model.
@@ -31,6 +31,8 @@ modelspend eval template extraction > my-cases.jsonl      # a starting point; ed
 `{"type": "json_equals", "expected": {...}}`, `{"type": "contains", "substrings": ["INV-20418"]}`, `{"type": "regex", "pattern": "^\\d{4}$"}`,
 `exact`, `valid_json`, `required_fields`, `not_contains`, `max_chars`, `min_chars`, `python_syntax` (and `python_tests` with the Docker sandbox).
 **Your validators are your definition of "good".** ModelSpend measures only what they check.
+
+**Make the cases discriminating.** If every model passes every case (as in an easy set of obvious tickets), the evidence cannot tell you which cheaper model is good enough. Include the cases you actually worry about: ambiguous inputs, misleading wording, edge cases, things that need a rule you define.
 
 Keep two sets if you can, `calibration/` (used to measure models) and `heldout/` (used to check the result), so you are not grading on
 cases you tuned against: `<folder>/calibration/*.jsonl` and `<folder>/heldout/*.jsonl`. A single file or a plain folder of `.jsonl` files also works.
