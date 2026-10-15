@@ -219,3 +219,35 @@ def test_scrubber_does_not_mangle_ordinary_words_and_scrubs_before_truncating():
     key = "sk-proj-" + "A1b2C3d4" * 6
     e = classify_exception("openai", Exception("x" * 280 + " " + key))      # the 300-character cut would land inside the key
     assert "A1b2C3d4" not in e.message and "sk-proj" not in e.message
+
+
+def test_sync_calls_reuse_one_event_loop(catalog, cfg):
+    """Provider SDK clients bind to the loop they first ran on: repeated sync calls must not each get a fresh, closed loop."""
+    import asyncio
+
+    eng, ad = make_engine(catalog, cfg, {"openai": "ok"})
+    inner = ad["openai"]
+    seen = []
+
+    class LoopBound:
+        def __getattr__(self, name):
+            return getattr(inner, name)
+
+        async def generate(self, req):
+            seen.append(asyncio.get_running_loop())
+            if seen[0] is not seen[-1] or seen[0].is_closed():
+                raise RuntimeError("Event loop is closed")
+            return await inner.generate(req)
+
+        async def stream(self, req):
+            seen.append(asyncio.get_running_loop())
+            if seen[0] is not seen[-1] or seen[0].is_closed():
+                raise RuntimeError("Event loop is closed")
+            async for ev in inner.stream(req):
+                yield ev
+
+    ms = ModelSpend(providers=["openai"], config=cfg, catalog=catalog, adapters={**ad, "openai": LoopBound()}, store=False)
+    for _ in range(3):
+        assert ms.route("Classify this").status == "ok"
+    assert list(ms.stream("Rewrite this"))[-1].type == "done"
+    assert len({id(x) for x in seen}) == 1

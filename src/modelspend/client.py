@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any, AsyncIterator, Iterator
 
 from .catalog import Catalog
@@ -65,23 +66,51 @@ class ModelSpend:
         return _run(self.apreview(messages, **kw))
 
     def stream(self, messages: str | list[Any], **kw: Any) -> Iterator[StreamEvent]:
-        loop = asyncio.new_event_loop()
+        _guard_running_loop()
         agen = self.astream(messages, **kw)
         try:
             while True:
                 try:
-                    yield loop.run_until_complete(agen.__anext__())
+                    yield _call(agen.__anext__())
                 except StopAsyncIteration:
                     return
         finally:
-            loop.run_until_complete(agen.aclose())
-            loop.close()
+            _call(agen.aclose())
+
+
+# Sync calls all run on ONE long-lived background loop. Provider SDK clients are cached on the adapters and keep connection
+# pools bound to the loop they were first used on, so a fresh asyncio.run() per call made the second call fail with
+# "Event loop is closed".
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_lock = threading.Lock()
+
+
+def _background_loop() -> asyncio.AbstractEventLoop:
+    global _loop
+    with _loop_lock:
+        if _loop is None or _loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever, name="modelspend-sync-loop", daemon=True).start()
+            _loop = loop
+        return _loop
+
+
+def _guard_running_loop() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError("called a sync ModelSpend method inside a running event loop; use the async variant (aroute/apreview/astream)")
+
+
+def _call(coro):
+    return asyncio.run_coroutine_threadsafe(coro, _background_loop()).result()
 
 
 def _run(coro):
     try:
-        asyncio.get_running_loop()
+        _guard_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
-    coro.close()
-    raise RuntimeError("called a sync ModelSpend method inside a running event loop; use the async variant (aroute/apreview/astream)")
+        coro.close()
+        raise
+    return _call(coro)
