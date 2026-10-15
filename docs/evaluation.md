@@ -10,6 +10,8 @@ Reported: pass rate (Wilson 95% interval), total spend, cost per success, latenc
 
 ## Fixtures
 
+> Using your own cases? See [own-evals.md](own-evals.md): only `id`, `category`, `messages` and `validators` are required, and `modelspend eval check` lints them. The built-in fixtures below keep the extra `difficulty`, `reference` and `wrong` fields that the simulated (mock) models use.
+
 `src/modelspend/eval/fixtures/{calibration,heldout}/<category>.jsonl`, all eight categories in both splits (two tasks each, so 16 per split — a smoke-test size, not a benchmark). `calibrate` reads **only** calibration; `run` defaults to **held-out**; a test enforces that ids and prompts are disjoint. Add your own with `--fixtures DIR` (same layout). Each task: `messages`, `validators`, `difficulty` (1–3, used only by the simulator), `reference`/`wrong` (simulator only), optional `sandbox_validators` (Docker, `--sandbox`).
 
 ## Mock vs live

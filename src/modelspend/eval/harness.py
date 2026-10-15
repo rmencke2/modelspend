@@ -27,13 +27,17 @@ ARMS = ("premium", "cheapest_eligible", "modelspend")
 
 @dataclass
 class EvalTask:
+    """One eval case. For your own cases only id, category, messages and validators matter; `reference` (an answer that should pass) and
+    `wrong` (one that should fail) are optional and let `modelspend eval check` test your validators; `difficulty` is used only by the
+    simulated (mock) models."""
+
     id: str
     category: str
-    difficulty: int
     messages: list[dict[str, Any]]
     validators: list[dict[str, Any]]
-    reference: str
-    wrong: str
+    difficulty: int = 1
+    reference: str = ""
+    wrong: str = ""
     sandbox_validators: list[dict[str, Any]] = field(default_factory=list)
     split: str = ""
 
@@ -46,15 +50,91 @@ def fixtures_root(path: str | Path | None = None) -> Path:
     return Path(path) if path else Path(str(resources.files("modelspend.eval").joinpath("fixtures")))
 
 
+TASK_FIELDS = {"id", "category", "messages", "validators", "difficulty", "reference", "wrong", "sandbox_validators"}
+
+
+def _case_files(split: str, fixtures_dir: str | Path | None) -> list[Path]:
+    """Built-in fixtures when none given. Your own: a directory laid out as <dir>/calibration/*.jsonl and <dir>/heldout/*.jsonl, or a
+    single .jsonl file, or a directory of .jsonl files (all of them are then used for whichever split is asked for)."""
+    if fixtures_dir is None:
+        return sorted((fixtures_root(None) / split).glob("*.jsonl"))
+    root = Path(fixtures_dir)
+    if root.is_file():
+        return [root]
+    if (root / split).is_dir():
+        return sorted((root / split).glob("*.jsonl"))
+    flat = sorted(root.glob("*.jsonl"))
+    if flat:
+        return flat
+    raise ValueError(f"no eval cases found in {root}: expected {root}/{split}/*.jsonl, or .jsonl files directly in the folder, or a single .jsonl file")
+
+
+def task_from_json(obj: Any, split: str, where: str) -> EvalTask:
+    if not isinstance(obj, dict):
+        raise ValueError(f"{where}: each line must be a JSON object")
+    unknown = set(obj) - TASK_FIELDS
+    if unknown:
+        raise ValueError(f"{where}: unknown field(s) {', '.join(sorted(unknown))}; allowed: {', '.join(sorted(TASK_FIELDS))}")
+    missing = [k for k in ("id", "category", "messages", "validators") if k not in obj]
+    if missing:
+        raise ValueError(f"{where}: missing {', '.join(missing)}")
+    return EvalTask(split=split, **obj)
+
+
 def load_tasks(split: str, fixtures_dir: str | Path | None = None) -> list[EvalTask]:
     if split not in ("calibration", "heldout"):
         raise ValueError("split must be 'calibration' or 'heldout'")
     out = []
-    for f in sorted((fixtures_root(fixtures_dir) / split).glob("*.jsonl")):
-        for line in f.read_text().splitlines():
-            if line.strip():
-                out.append(EvalTask(split=split, **json.loads(line)))
+    for f in _case_files(split, fixtures_dir):
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{f.name}:{n}: not valid JSON ({e.msg})") from None
+            out.append(task_from_json(obj, split, f"{f.name}:{n}"))
     return out
+
+
+def lint_tasks(tasks: list[EvalTask]) -> list[tuple[str, str, str]]:
+    """Static checks on eval cases: (severity, case id, message). Errors would make the measurements meaningless."""
+    from ..validation import run_spec
+    issues: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    valid_cats = {c.value for c in TaskCategory if c != TaskCategory.unknown}
+    for t in tasks:
+        def err(m: str, sev: str = "error", _t=t) -> None:
+            issues.append((sev, _t.id, m))
+        if t.id in seen:
+            err("duplicate id")
+        seen.add(t.id)
+        if t.category not in valid_cats:
+            err(f"unknown category '{t.category}' (use one of {', '.join(sorted(valid_cats))})")
+        if not any(m.get("role") == "user" and m.get("content") for m in t.messages if isinstance(m, dict)):
+            err("messages need at least one user message with content")
+        if not t.validators and not t.sandbox_validators:
+            err("no validators: a case that cannot fail measures nothing")
+        usable = True
+        for s in list(t.validators) + list(t.sandbox_validators):
+            try:
+                spec = ValidatorSpec(**s)
+            except Exception as e:  # noqa: BLE001
+                err(f"bad validator {s!r}: {e}")
+                usable = False
+                continue
+            if spec.type == "python_tests":
+                continue  # needs the Docker sandbox; not probed here
+            probe = run_spec(spec, "probe", None)
+            if probe.detail.startswith("unknown validator type") or probe.detail.startswith("validator misconfigured"):
+                err(f"validator '{spec.type}': {probe.detail}")
+        if not usable:
+            continue  # the reference / wrong checks below need working validators
+        if t.reference.strip() and not grade(t, t.reference)[0]:
+            err("the validators reject this case's own `reference` answer (so no model could pass)")
+        if t.wrong.strip() and grade(t, t.wrong)[0]:
+            err("the validators accept this case's `wrong` answer (they may be too lax)", "warning")
+    return issues
 
 
 def grade(task: EvalTask, text: str, sandbox_runner: Callable | None = None, use_sandbox: bool = False) -> tuple[bool, list[str]]:
@@ -241,7 +321,7 @@ def render_markdown(rep: dict[str, Any]) -> str:
 
 
 async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str], budget_usd: float | None = None,
-                    use_sandbox: bool = False) -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
+                    use_sandbox: bool = False, dataset: str = "modelspend-calibration-v1") -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
     """Run every eligible model on every calibration task of each category; return measured evidence."""
     from datetime import date
     ev: dict[str, dict[str, EvidenceItem]] = {}
@@ -260,7 +340,7 @@ async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str],
                 ok = False
             spent += ledger.used
             slot = ev.setdefault(f"{cand.provider}/{cand.model}", {}).setdefault(
-                t.category, EvidenceItem(n=0, passes=0, dataset="modelspend-calibration-v1", measured_on=date.today()))
+                t.category, EvidenceItem(n=0, passes=0, dataset=dataset, measured_on=date.today()))
             slot.n += 1
             slot.passes += int(ok)
     return ev, spent, stopped

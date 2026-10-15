@@ -198,7 +198,7 @@ class Router:
                     drop(m, "latency", f"observed p50 {obs[0]:.0f}ms (n={obs[1]}) exceeds target {req.latency_target_ms}ms")
                     continue
             s = (Suitability(True, "none", "pinned by the caller (observe-only: no suitability check)") if req.pin
-                 else assess(m, cl.category, req.profile, req.hard))
+                 else assess(m, cl.category, req.profile, req.hard, self.cfg.thresholds))
             cand = Candidate(
                 provider=m.provider, model=m.id, tier=m.tier, suitability_basis=s.basis,  # type: ignore[arg-type]
                 suitability_detail=s.detail, evidence_lower_bound=s.lower_bound,

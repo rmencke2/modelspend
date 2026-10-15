@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.4.0b1 - unreleased
+## 0.5.0b1 - unreleased
+
+- **Your own evidence bars.** `modelspend thresholds set|list|remove`: per task category (or `*`) set how many eval cases a model needs (`min_n`),
+  the pass rate it must show (`min_pass_rate`), whether that is judged on the conservative 95% Wilson lower bound (default) or the observed rate (`basis`),
+  and whether a model may be chosen on its tier prior alone (`require_evidence`). Resolved field by field: category, then `*`, then the profile. A setting can
+  only tighten `high_assurance`'s evidence requirement. Bars that cannot be cleared at the evidence's n are reported as such (with the n needed) instead of
+  silently failing. Invalid settings raise an error.
+- **Your own eval cases.** Only `id`, `category`, `messages` and `validators` are required (`difficulty`, `reference`, `wrong` are optional); cases can come from a single
+  `.jsonl` file, a folder of them, or `<dir>/calibration` + `<dir>/heldout`. `modelspend eval check` lints them for free (bad JSON with file:line, unknown fields,
+  duplicate ids, unknown or misconfigured validators, validators that reject the `reference` or accept the `wrong` answer, enough cases for your bar);
+  `modelspend eval template <category>` prints a starter case; `eval calibrate --dataset NAME` names the evidence.
+- **`modelspend evidence`** (and `GET /v1/evidence`; `GET /v1/policy` now lists thresholds): which models clear the bar for which category, and the cheapest that
+  does. It uses the router's own functions, so the two cannot disagree.
+- Docs: docs/own-evals.md. Tested with mocked providers and unit tests (including a property test that the table and the router agree), not yet with a live calibration run.
+
+## 0.4.0b1
 
 - **Model aliases.** `modelspend alias set coding anthropic/claude-sonnet-5-5`, then `--model coding`, `model="coding"` on the local server, or `pin="coding"`
   in the SDK. An alias is a pinned model (no routing); tokens, cost, tags, reports and budgets still work. `GET/PUT/DELETE /v1/aliases`.

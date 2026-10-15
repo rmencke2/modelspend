@@ -175,7 +175,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.4.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.5.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:
@@ -316,7 +316,21 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
 
     @app.get("/v1/policy", dependencies=[Depends(auth), Depends(host_guard)])
     async def policy():
-        return {"policy_version": POLICY_VERSION, "profiles": {k.value: {**v.__dict__, "name": k.value} for k, v in PROFILES.items()}}
+        return {"policy_version": POLICY_VERSION, "profiles": {k.value: {**v.__dict__, "name": k.value} for k, v in PROFILES.items()},
+                "thresholds": {k: v.as_dict() for k, v in cfg.thresholds.items()}}
+
+    @app.get("/v1/evidence", dependencies=[Depends(auth), Depends(host_guard)])
+    async def evidence_view(request: Request):
+        """Which models clear the evidence bar (the profile's, or your own thresholds) for which task category (`?profile=&category=&model=`)."""
+        from .. import evidence as ev
+        q = request.query_params
+        extra = [k for k in q if k not in ("profile", "category", "model")]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        try:
+            return ev.build(engine.catalog, cfg, q.get("profile", "balanced"), q.get("category"), q.get("model"))
+        except ValueError as e:
+            raise InvalidRequest(str(e))
 
     @app.get("/v1/usage", dependencies=[Depends(auth), Depends(host_guard)])
     @app.get("/dashboard/data", dependencies=[Depends(auth), Depends(host_guard)])

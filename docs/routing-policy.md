@@ -27,6 +27,13 @@ Measured evidence beats the prior in both directions: a tier-1 model with strong
 
 With no evidence anywhere, `high_assurance` refuses with an explanation instead of guessing; run `modelspend eval calibrate --mode live --budget … --write` (with your own fixtures) to produce evidence.
 
+### Your own evidence bars
+
+The `min_n` and lower-bound figures above are the **built-in** bars. `modelspend thresholds set <category|*> --min-n N --min-pass-rate R [--basis lower_bound|observed] [--require-evidence]`
+overrides them per task category in every profile, resolved field by field (category, then `*`, then the profile). The measured verdicts are *clears*, *below the
+bar*, *needs more cases* and *bar unreachable at this n* (a perfect record at that n still could not show the rate; the cases needed are reported); in the last two
+the model falls back to its tier prior unless the profile or your setting requires evidence. A setting can only tighten `high_assurance`. See [own-evals.md](own-evals.md).
+
 ## Selection
 
 Among candidates that pass all hard constraints and are suitable, choose the lowest **expected** cost when every candidate is priced. If *any* candidate has no price (`allow_unpriced`), costs are not comparable, so ranking falls back to **smallest suitable tier, then fewest expected tokens** (`plan.ranking_basis = "tier_then_tokens"`); ties → higher measured lower bound, higher tier, then provider/model name. No success probabilities are fabricated and a model's self-reported confidence is never used.

@@ -31,6 +31,8 @@ keys_app = typer.Typer(no_args_is_help=True, help="Set, list, test and remove AP
 providers_app = typer.Typer(no_args_is_help=True, help="Choose which providers ModelSpend may use by default.")
 models_app = typer.Typer(no_args_is_help=True, help="See which models are routable and turn individual models on or off.")
 sources_app = typer.Typer(no_args_is_help=True, help="Where each provider's official pricing page lives (change it if a URL moves).")
+thresholds_app = typer.Typer(no_args_is_help=True, help="Your own evidence bars: how much measured proof a model needs, per task category, before ModelSpend picks it.")
+app.add_typer(thresholds_app, name="thresholds")
 alias_app = typer.Typer(no_args_is_help=True, help="Name the model you want for each kind of work (e.g. coding, classify) and use the name as --model / model=.")
 app.add_typer(alias_app, name="alias")
 budget_app = typer.Typer(no_args_is_help=True, help="Spending limits per project and/or agent (daily or monthly, in USD and/or tokens).")
@@ -311,6 +313,85 @@ def report(by: str = typer.Option("project,agent,model", "--by", help="Group by 
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
     typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_csv(rep) if fmt == "csv" else to_table(rep))
+
+
+# ---------------------------------------------------------------- thresholds and evidence
+@thresholds_app.command("set")
+def thresholds_set(category: str = typer.Argument(..., help="A task category (classification, extraction, rewriting, summarization, translation, qa_context, code, analysis) or '*' for all."),
+                   min_n: Optional[int] = typer.Option(None, help="Eval cases a model needs for its results to count."),
+                   min_pass_rate: Optional[float] = typer.Option(None, help="Pass rate it must show, e.g. 0.95."),
+                   basis: Optional[str] = typer.Option(None, help="lower_bound (default: the 95% Wilson lower bound must clear the rate; conservative) or observed (passes / n)."),
+                   require_evidence: Optional[bool] = typer.Option(None, "--require-evidence/--allow-prior", help="--require-evidence: never choose a model for this category on its tier prior alone.")):
+    """Set (or change fields of) your evidence bar for a category. Unset fields fall back to '*', then to the profile's built-in bar."""
+    from .policy import min_samples_for, parse_threshold
+    cfg = Config.from_env()
+    s = load_settings(cfg.home)
+    cur = dict((s.get("thresholds") or {}).get(category.strip().lower(), {}))
+    for k, v in (("min_n", min_n), ("min_pass_rate", min_pass_rate), ("basis", basis), ("require_evidence", require_evidence)):
+        if v is not None:
+            cur[k] = v
+    try:
+        cat, t = parse_threshold(category, cur)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    th = dict(s.get("thresholds") or {})
+    th[cat] = t.as_dict()
+    s["thresholds"] = th
+    save_settings(cfg.home, s)
+    typer.echo(f"threshold for {cat}: " + ", ".join(f"{k}={v}" for k, v in t.as_dict().items()) + f"   (saved in {settings_path(cfg.home)}; restart a running server to apply)")
+    if t.min_pass_rate is not None and (t.basis or "lower_bound") == "lower_bound":
+        typer.echo(f"note: with the lower_bound basis, a bar of {t.min_pass_rate:g} needs at least {min_samples_for(t.min_pass_rate)} cases even if every one passes. "
+                   "Use --basis observed if you want to judge by the plain pass rate.")
+
+
+@thresholds_app.command("list")
+def thresholds_list(profile: str = typer.Option("balanced", help="Show the bars as they apply under this profile.")):
+    """Your settings, and the bar that actually applies to each category."""
+    from .policy import PROFILES, bar_for
+    from .types import Profile, TaskCategory
+    cfg = Config.from_env()
+    try:
+        pol = PROFILES[Profile(profile)]
+    except ValueError:
+        typer.echo("profile must be economy, balanced or high_assurance", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"your settings: {', '.join(f'{k}: {v.as_dict()}' for k, v in cfg.thresholds.items()) or 'none (profile defaults apply)'}\n")
+    typer.echo(f"effective bars under the {profile} profile:")
+    for c in TaskCategory:
+        if c != TaskCategory.unknown:
+            b = bar_for(pol, c, cfg.thresholds)
+            typer.echo(f"  {c.value:<15}{b.describe()}" + ("" if b.source == "profile" else f"   [{b.source}]"))
+
+
+@thresholds_app.command("remove")
+def thresholds_remove(category: str):
+    """Delete your bar for a category (the profile's built-in bar applies again)."""
+    cfg = Config.from_env()
+    s = load_settings(cfg.home)
+    th = dict(s.get("thresholds") or {})
+    if category.strip().lower() not in th:
+        typer.echo(f"no threshold for '{category}'", err=True)
+        raise typer.Exit(2)
+    del th[category.strip().lower()]
+    s["thresholds"] = th
+    save_settings(cfg.home, s)
+    typer.echo(f"removed threshold for {category}")
+
+
+@app.command()
+def evidence(profile: str = typer.Option("balanced", help="Judge against this profile's bars (plus your own thresholds)."),
+             category: Optional[str] = None, model: Optional[str] = typer.Option(None, help="Only this model, as provider/model-id."),
+             catalog: Optional[str] = CAT, as_json: bool = typer.Option(False, "--json")):
+    """Which models clear your evidence bar for which task category, from measured results (`eval calibrate --write`)."""
+    from . import evidence as ev
+    cfg = Config.from_env()
+    try:
+        rep = ev.build(_catalog(cfg, catalog), cfg, profile, category, model)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if as_json else ev.to_table(rep))
 
 
 # ---------------------------------------------------------------- budgets and retention
@@ -726,9 +807,68 @@ def eval_run(mode: str = typer.Option("mock", help="mock (simulated, free) or li
         typer.echo(f"wrote {out} and {out.with_suffix('.json')}", err=True)
 
 
+@eval_app.command("check")
+def eval_check(fixtures: Path = typer.Option(..., "--fixtures", help="Your cases: a .jsonl file, a folder of .jsonl files, or <folder>/calibration + <folder>/heldout."),
+               profile: str = typer.Option("balanced", help="Compare case counts with this profile's bar (plus your thresholds).")):
+    """Check your eval cases (no model is called, nothing is spent): valid format, working validators, enough cases for your bar."""
+    from .eval.harness import lint_tasks, load_tasks
+    from .policy import PROFILES, bar_for, min_samples_for
+    from .types import Profile, TaskCategory
+    cfg = Config.from_env()
+    try:
+        pol = PROFILES[Profile(profile)]
+        layered = fixtures.is_dir() and ((fixtures / "calibration").is_dir() or (fixtures / "heldout").is_dir())
+        if layered:
+            sets = {sp: load_tasks(sp, fixtures) for sp in ("calibration", "heldout") if (fixtures / sp).is_dir()}
+        else:
+            sets = {"calibration": load_tasks("calibration", fixtures)}
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    label = {"calibration": "calibration" if layered else "all cases", "heldout": "held-out"}
+    errors = 0
+    for split, tasks in sets.items():
+        typer.echo(f"{label[split]}: {len(tasks)} case(s) from {fixtures}")
+        by: dict[str, int] = {}
+        for t in tasks:
+            by[t.category] = by.get(t.category, 0) + 1
+        for c in TaskCategory:
+            if c == TaskCategory.unknown or c.value not in by:
+                continue
+            b = bar_for(pol, c, cfg.thresholds)
+            n = by[c.value]
+            need = max(b.n, min_samples_for(b.rate) if b.basis == "lower_bound" else 1)
+            verdict = "enough to clear the bar if the model passes them all" if n >= need else f"too few to clear the bar (needs {need})"
+            typer.echo(f"  {c.value:<15}{n:>4} case(s)   bar: {b.describe()}   -> {verdict}")
+        for sev, cid, msg in lint_tasks(tasks):
+            typer.echo(f"  {sev.upper():<8}{cid}: {msg}")
+            errors += sev == "error"
+    if layered and len(sets) == 2:
+        both = {t.id for t in sets["calibration"]} & {t.id for t in sets["heldout"]}
+        if both:
+            typer.echo(f"  WARNING calibration and held-out share case ids: {', '.join(sorted(both)[:5])} (keep the two sets separate, or the held-out result proves nothing)")
+    typer.echo("ok" if not errors else f"{errors} error(s): fix them before measuring")
+    raise typer.Exit(1 if errors else 0)
+
+
+@eval_app.command("template")
+def eval_template(category: str = typer.Argument("classification", help="Task category to show an example case for.")):
+    """Print an example eval case (one JSON line) to copy into your own .jsonl file."""
+    from .eval.harness import load_tasks
+    t = next((t for t in load_tasks("calibration") if t.category == category), None)
+    if t is None:
+        typer.echo(f"no example for '{category}'", err=True)
+        raise typer.Exit(2)
+    case = {"id": f"my-{category}-1", "category": t.category, "messages": t.messages, "validators": t.validators, "reference": t.reference, "wrong": t.wrong}
+    typer.echo(json.dumps(case))
+    typer.echo("one case per line. `validators` decide pass/fail (see docs/own-evals.md); `reference` should pass and `wrong` should fail: "
+               "`modelspend eval check` uses them to test your validators.", err=True)
+
+
 @eval_app.command("calibrate")
 def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: Optional[float] = None,
                    fixtures: Optional[Path] = None, sandbox: bool = False, catalog: Optional[str] = None,
+                   dataset: Optional[str] = typer.Option(None, help="Name stored with the evidence (shown in route explanations). Default: your folder or file name."),
                    write: bool = typer.Option(False, help="Merge results into the evidence overlay file (live mode only).")):
     """Measure per-model, per-category pass counts on the CALIBRATION split and (optionally) store them as routing evidence."""
     from .eval import calibrate, load_tasks
@@ -743,7 +883,8 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
             typer.echo("live calibration spends real money: pass --budget <USD>.", err=True)
             raise typer.Exit(2)
         eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), None)
-    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox))
+    ds = dataset or (fixtures.stem if fixtures is not None and fixtures.is_file() else fixtures.name if fixtures is not None else "modelspend-calibration-v1")
+    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds))
     typer.echo(("SIMULATED " if mode == "mock" else "") + f"calibration spend ${spent:.6f}" + (f" | {stopped}" if stopped else ""))
     for ref, cats in sorted(ev.items()):
         typer.echo(f"  {ref}: " + ", ".join(f"{c} {e.passes}/{e.n}" for c, e in sorted(cats.items())))

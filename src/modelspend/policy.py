@@ -9,8 +9,10 @@ No success probabilities are computed or assumed. Suitability is one of:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
 
-from .catalog.models import Model, wilson_lower_bound
+from .catalog.models import EvidenceItem, Model, wilson_lower_bound
 from .types import Profile, TaskCategory
 
 POLICY_VERSION = "2026.10-1"
@@ -78,6 +80,127 @@ def required_tier(cat: TaskCategory, profile: Profile, hard: bool) -> int:
     return max(1, min(3, t))
 
 
+# ------------------------------------------------------------------------------------------------ custom evidence bars
+BASES = ("lower_bound", "observed")
+MAX_N = 100_000
+MAX_RATE_LOWER_BOUND = 0.999
+
+
+@lru_cache(maxsize=256)
+def min_samples_for(rate: float) -> int:
+    """Smallest number of cases for which even a PERFECT record has a Wilson 95% lower bound >= rate (so the bar can be cleared at all)."""
+    for n in range(1, MAX_N + 1):
+        if wilson_lower_bound(n, n) >= rate:
+            return n
+    raise ValueError(f"a lower-bound bar of {rate} needs more than {MAX_N} cases")
+
+
+@dataclass(frozen=True)
+class Threshold:
+    """A user-defined evidence bar for one task category (or '*' for all). Any field may be left unset: it then falls back to '*', then to the profile."""
+
+    min_n: int | None = None
+    min_pass_rate: float | None = None
+    basis: str | None = None  # lower_bound (default: 95% Wilson lower bound must clear the rate) | observed (passes / n must clear it)
+    require_evidence: bool | None = None  # True: never choose a model for this category on its tier prior alone
+
+    def as_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in (("min_n", self.min_n), ("min_pass_rate", self.min_pass_rate), ("basis", self.basis),
+                                  ("require_evidence", self.require_evidence)) if v is not None}
+
+
+def parse_threshold(category: str, raw: dict[str, Any]) -> tuple[str, Threshold]:
+    cat = str(category).strip().lower()
+    if cat != "*" and cat not in {c.value for c in TaskCategory if c != TaskCategory.unknown}:
+        raise ValueError(f"unknown category '{category}'; use '*' or one of {', '.join(c.value for c in TaskCategory if c != TaskCategory.unknown)}")
+    extra = set(raw) - {"min_n", "min_pass_rate", "basis", "require_evidence"}
+    if extra:
+        raise ValueError(f"unknown threshold field(s) for '{cat}': {', '.join(sorted(extra))}")
+    n, rate, basis, req = raw.get("min_n"), raw.get("min_pass_rate"), raw.get("basis"), raw.get("require_evidence")
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= MAX_N):
+        raise ValueError(f"min_n for '{cat}' must be a whole number between 1 and {MAX_N}")
+    if basis is not None and basis not in BASES:
+        raise ValueError(f"basis for '{cat}' must be one of {', '.join(BASES)}")
+    if rate is not None:
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 < rate <= 1:
+            raise ValueError(f"min_pass_rate for '{cat}' must be a number above 0 and at most 1 (for example 0.95)")
+        if (basis or "lower_bound") == "lower_bound":
+            if rate > MAX_RATE_LOWER_BOUND:
+                raise ValueError(f"a lower-bound bar above {MAX_RATE_LOWER_BOUND} cannot be demonstrated with a realistic number of cases; use basis=observed")
+            min_samples_for(float(rate))
+    if req is not None and not isinstance(req, bool):
+        raise ValueError(f"require_evidence for '{cat}' must be true or false")
+    if n is None and rate is None and basis is None and req is None:
+        raise ValueError(f"set at least one of min_n, min_pass_rate, basis, require_evidence for '{cat}'")
+    return cat, Threshold(n, float(rate) if rate is not None else None, basis, req)
+
+
+def parse_thresholds(raw: dict[str, Any] | None) -> dict[str, Threshold]:
+    out: dict[str, Threshold] = {}
+    for cat, spec in (raw or {}).items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"thresholds['{cat}'] must be an object")
+        c, t = parse_threshold(cat, spec)
+        out[c] = t
+    return out
+
+
+@dataclass(frozen=True)
+class Bar:
+    """The evidence bar that applies to a (category, profile): what a model's measured results must show."""
+
+    n: int
+    rate: float
+    basis: str
+    require_evidence: bool
+    source: str  # "profile" | "settings: <category>" | "settings: *" (the strictest source that set anything)
+
+    def describe(self) -> str:
+        what = "95% lower bound" if self.basis == "lower_bound" else "observed pass rate"
+        return f"n >= {self.n} and {what} >= {self.rate:g}" + (" (evidence required, no tier priors)" if self.require_evidence else "")
+
+
+def bar_for(pol: ProfilePolicy, cat: TaskCategory, thresholds: dict[str, Threshold] | None) -> Bar:
+    """Resolve field by field: the category's own setting, else '*', else the profile's built-in bar."""
+    ts = [t for t in ((thresholds or {}).get(cat.value), (thresholds or {}).get("*")) if t is not None]
+
+    def pick(field: str, default: Any) -> tuple[Any, str | None]:
+        for key, t in zip((cat.value, "*"), ((thresholds or {}).get(cat.value), (thresholds or {}).get("*"))):
+            if t is not None and getattr(t, field) is not None:
+                return getattr(t, field), key
+        return default, None
+    n, s1 = pick("min_n", pol.min_n)
+    rate, s2 = pick("min_pass_rate", pol.min_lower_bound)
+    basis, s3 = pick("basis", "lower_bound")
+    user_req, s4 = pick("require_evidence", None)
+    req = (not pol.allow_prior) or bool(user_req)  # a setting can only TIGHTEN this: high_assurance always requires evidence
+    src = sorted({x for x in (s1, s2, s3, s4) if x}, key=lambda k: (k == "*", k))
+    return Bar(n, rate, basis, bool(req), "profile" if not ts or not src else "settings: " + ", ".join(src))
+
+
+def judge_evidence(ev: EvidenceItem | None, bar: Bar) -> tuple[str, str, float | None]:
+    """(verdict, detail, lower bound). verdict: none | needs_more_cases | bar_unreachable | clears | below_bar."""
+    if ev is None or ev.n <= 0:
+        return "none", f"evidence insufficient (n=0, need {bar.n})", None
+    lb = wilson_lower_bound(ev.passes, ev.n)
+    if ev.n < bar.n:
+        return "needs_more_cases", f"evidence insufficient (n={ev.n}, need {bar.n})", lb
+    if bar.basis == "lower_bound":
+        perfect = wilson_lower_bound(ev.n, ev.n)
+        if perfect < bar.rate:
+            need = min_samples_for(bar.rate)
+            return ("bar_unreachable",
+                    f"n={ev.n} cannot demonstrate a lower bound of {bar.rate:g} even if every case passes (a perfect record gives {perfect:.2f}); needs at least {need} cases",
+                    lb)
+        if lb >= bar.rate:
+            return "clears", f"{ev.passes}/{ev.n} passed on '{ev.dataset}' (95% lower bound {lb:.2f} >= {bar.rate:g})", lb
+        return "below_bar", f"measured {ev.passes}/{ev.n} on '{ev.dataset}' (lower bound {lb:.2f} < {bar.rate:g})", lb
+    obs = ev.passes / ev.n
+    if obs >= bar.rate:
+        return "clears", f"{ev.passes}/{ev.n} passed on '{ev.dataset}' (observed {obs:.2f} >= {bar.rate:g}; 95% lower bound {lb:.2f})", lb
+    return "below_bar", f"measured {ev.passes}/{ev.n} on '{ev.dataset}' (observed {obs:.2f} < {bar.rate:g})", lb
+
+
 @dataclass
 class Suitability:
     suitable: bool
@@ -86,18 +209,21 @@ class Suitability:
     lower_bound: float | None = None
 
 
-def assess(model: Model, cat: TaskCategory, profile: Profile, hard: bool) -> Suitability:
+def assess(model: Model, cat: TaskCategory, profile: Profile, hard: bool, thresholds: dict[str, Threshold] | None = None) -> Suitability:
     pol = PROFILES[profile]
     need = required_tier(cat, profile, hard)
+    bar = bar_for(pol, cat, thresholds)
     ev = model.evidence.get(cat.value)
-    if ev is not None and ev.n >= pol.min_n:
-        lb = wilson_lower_bound(ev.passes, ev.n)
-        if lb >= pol.min_lower_bound:
-            return Suitability(True, "measured", f"{ev.passes}/{ev.n} passed on '{ev.dataset}' (95% lower bound {lb:.2f} >= {pol.min_lower_bound})", lb)
-        return Suitability(False, "measured", f"measured {ev.passes}/{ev.n} on '{ev.dataset}' (lower bound {lb:.2f} < {pol.min_lower_bound})", lb)
-    have = f"evidence insufficient (n={ev.n if ev else 0}, need {pol.min_n})"
-    if not pol.allow_prior:
-        return Suitability(False, "none", f"{pol.name.value} requires measured evidence; {have}")
+    verdict, detail, lb = judge_evidence(ev, bar)
+    note = f" [bar from {bar.source}]" if bar.source != "profile" else ""
+    if verdict == "clears":
+        return Suitability(True, "measured", detail + note, lb)
+    if verdict == "below_bar":
+        return Suitability(False, "measured", detail + note, lb)
+    have = detail + note  # insufficient evidence: fall back to the tier prior only if both the profile and the bar allow it
+    if bar.require_evidence:
+        who = pol.name.value if not pol.allow_prior else "your settings"
+        return Suitability(False, "none", f"{who} require measured evidence; {have}")
     if model.tier is None:
         return Suitability(False, "none", f"no tier prior and {have}")
     if model.tier >= need:

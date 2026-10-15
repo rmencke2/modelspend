@@ -28,7 +28,7 @@ Response `modelspend`: `provider`, `model`, `explanation`, `task`, `usage` and `
 
 ## Other endpoints
 
-`POST /v1/route` (native request/response) · `POST /v1/route/preview` (candidates and estimates; no generation call, no spend) · `GET /v1/catalog` · `GET /v1/policy` · `GET /v1/usage` · `GET /v1/usage/report` (tokens and cost grouped by project, agent, model, …) · `GET/PUT /v1/budgets`, `DELETE /v1/budgets/{id}` (per-project / per-agent limits) · `GET /v1/aliases`, `PUT/DELETE /v1/aliases/{name}` · `GET /dashboard` · `GET /healthz`. Errors use `{"error": {message, type, param, code}}` (a hard per-project/agent budget gives HTTP 429 `period_budget_exceeded`, before anything is sent to a provider); routing failures include the plan under `error.modelspend`.
+`POST /v1/route` (native request/response) · `POST /v1/route/preview` (candidates and estimates; no generation call, no spend) · `GET /v1/catalog` · `GET /v1/policy` (profiles and your thresholds) · `GET /v1/evidence` (which models clear your evidence bar per category) · `GET /v1/usage` · `GET /v1/usage/report` (tokens and cost grouped by project, agent, model, …) · `GET/PUT /v1/budgets`, `DELETE /v1/budgets/{id}` (per-project / per-agent limits) · `GET /v1/aliases`, `PUT/DELETE /v1/aliases/{name}` · `GET /dashboard` · `GET /healthz`. Errors use `{"error": {message, type, param, code}}` (a hard per-project/agent budget gives HTTP 429 `period_budget_exceeded`, before anything is sent to a provider); routing failures include the plan under `error.modelspend`.
 
 ## Auth
 

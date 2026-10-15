@@ -94,6 +94,15 @@ def _bool(v: str | None, default: bool = False) -> bool:
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _load_thresholds(settings: dict) -> dict:
+    """Parse the user's evidence bars. A typo in a quality bar must not be silently ignored, so errors are raised."""
+    from .policy import parse_thresholds
+    try:
+        return parse_thresholds(settings.get("thresholds"))
+    except ValueError as e:
+        raise ValueError(f"settings.json: {e}") from None
+
+
 @dataclass
 class Config:
     home: Path = field(default_factory=lambda: Path.home() / ".modelspend")
@@ -111,6 +120,7 @@ class Config:
     allow_preview_models: bool = False
     allow_unpriced: bool = False  # run models without catalog pricing (cost reported as unknown)
     aliases: dict[str, str] = field(default_factory=dict)  # name -> 'provider/model-id' (see aliases.py); a pinned, unrouted model
+    thresholds: dict = field(default_factory=dict)  # user-defined evidence bars per task category (see policy.Threshold); from settings.json
     sticky: bool = True  # keep the model chosen for earlier turns of a conversation (MODELSPEND_STICKY=false to turn off)
     default_project: str | None = None  # attribution defaults (MODELSPEND_PROJECT / MODELSPEND_AGENT)
     default_agent: str | None = None
@@ -174,6 +184,7 @@ class Config:
             api_keys=keys,
             key_sources=key_sources,
             aliases={str(k): str(v) for k, v in (settings.get("aliases") or {}).items()},
+            thresholds=_load_thresholds(settings),
             sticky=_bool(e.get("MODELSPEND_STICKY"), bool(settings.get("sticky_conversations", True))),
             allow_models=list(settings.get("allow_models", [])),
             deny_models=list(settings.get("deny_models", [])),

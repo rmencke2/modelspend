@@ -13,6 +13,7 @@ Python SDK, CLI, a local FastAPI server with an OpenAI-compatible `/v1/chat/comp
 > - **Tokens first.** Token usage (input, cached, output, reasoning) is exact, provider-reported and summed over every attempt; it is the headline number in the CLI, API and dashboard. Cost is derived from it and shown as `unknown` for models without a price (`--allow-unpriced`). Budgets can be set in tokens (`--budget-tokens`) as well as dollars.
 > - **Verified live (2026-10-12): Anthropic** — model sync, routing, one-step escalation, token budgets, streaming and the dashboard, with token counts and cost checked against the provider's reported usage. **Verified live (2026-10-12): OpenAI, partially** — chat and streaming calls on `gpt-4.1-nano` and `gpt-5-mini`: routing, catalog sync, token counts (the pre-call input estimate matched the provider's count exactly, and reasoning tokens arrive inside the output count), provider-reported usage in the stream, and cost computed from the catalog prices. **Not yet exercised live for OpenAI:** strict structured output and a comparison against the provider's billing page. **Cross-vendor escalation was verified live** (an impossible validator forced one escalation from OpenAI `gpt-4.1-nano` to Anthropic `claude-sonnet-5-5`, then it stopped; tokens and cost added up, and the first call showed as overhead in the report). **Failover on a bad key was verified live (OpenAI auth error, no retry, Anthropic answered, key not echoed).** The **Gemini and xAI adapters are implemented with the official SDKs but tested only against recorded-shape fakes**, not yet live ([docs/limitations.md](docs/limitations.md)). Reports from people running them are welcome.
 > - Savings figures exist only as measured output of `modelspend eval`; mock runs are labelled **SIMULATED** and are not benchmarks.
+> - **Your own evals and evidence bars (0.5) are tested with mocked providers and unit tests only, not yet with a live calibration run** ([docs/own-evals.md](docs/own-evals.md)).
 > - **Aliases and conversation stickiness (0.4) were verified live on OpenAI and Anthropic** (an alias ran exactly its model; a second turn stayed on the first turn's model, and switched when stickiness was turned off) ([docs/aliases-and-stickiness.md](docs/aliases-and-stickiness.md)).
 > - **Per-project / per-agent reporting (0.2)** was checked live against Anthropic and OpenAI. **Per-agent budgets (0.3): hard refusal before the call and the soft warning were verified live on OpenAI; the dashboard Costs tab was checked on live data (the per-agent and per-model token totals add up to the headline total). The budget form and concurrent enforcement across processes are not yet verified live.** Only calls made through ModelSpend are counted ([docs/cost-attribution.md](docs/cost-attribution.md)).
 
@@ -169,6 +170,20 @@ An **alias** names a model for a kind of work and works as `--model`, as `model=
 
 When you do use routing, a multi-turn chat **keeps the model chosen for its earlier turns** (so it does not hop between models and lose provider-side prompt caching) unless that model stops being suitable or available. Details, controls and limits: [docs/aliases-and-stickiness.md](docs/aliases-and-stickiness.md).
 
+## Your own evals and evidence bars (0.5)
+
+Benchmarks rarely match your prompts. Write a few dozen cases with pass/fail checks, measure the models on them, and decide how much proof you require:
+
+```bash
+modelspend eval template extraction > my-cases.jsonl
+modelspend eval check --fixtures my-cases.jsonl
+modelspend eval calibrate --mode live --budget 1 --fixtures my-cases.jsonl --dataset my-tickets --write
+modelspend evidence
+modelspend thresholds set extraction --min-n 80 --min-pass-rate 0.95
+```
+
+`modelspend evidence` shows which models clear your bar for which task category, and the router uses exactly that. Guide, validators and limits (your checks define "good"; small n gives wide intervals): [docs/own-evals.md](docs/own-evals.md).
+
 ## SDK
 
 ```python
@@ -206,7 +221,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
