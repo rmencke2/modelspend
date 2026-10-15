@@ -221,6 +221,27 @@ def test_lint_catches_cases_that_would_measure_nothing(tmp_path):
     assert has("error", "bad validator", issues({**CASE, "validators": [{"name": "no type"}]}))
 
 
+async def test_calibrate_can_report_which_cases_failed_without_storing_anything(catalog, tmp_path):
+    from modelspend.eval.sim import build_sim_engine
+    tasks = [t for t in load_tasks("calibration") if t.difficulty >= 2][:4] + load_tasks("calibration")[:2]
+    eng = build_sim_engine(catalog, tasks, providers=["openai"])
+    failures: list = []
+    evd, _s, _ = await calibrate(eng, tasks, ["openai"], None, False, "x", failures)
+    assert failures and all({"model", "case", "category", "reason", "output"} <= set(f) for f in failures)
+    small = "openai/synthetic-openai-small"  # tier 1: fails the tasks labelled harder than it
+    assert any(f["model"] == small for f in failures)
+    total_fail = sum(i.n - i.passes for cats in evd.values() for i in cats.values())
+    assert len(failures) == total_fail  # every failure is listed, none invented
+    assert all(len(f["output"]) <= 160 for f in failures)
+    # nothing about the failures reaches the evidence overlay: only counts
+    assert not any("output" in i.model_dump() for cats in evd.values() for i in cats.values())
+
+
+def test_cli_show_failures_flag_is_accepted_in_mock_mode(home):
+    r = cli("eval", "calibrate", "--mode", "mock", "--providers", "openai", "--show-failures")
+    assert r.exit_code == 0 and "failed cases" in r.output and "->" in r.output
+
+
 async def test_calibrate_stores_your_dataset_name(catalog):
     from modelspend.eval.sim import build_sim_engine
     tasks = load_tasks("calibration")[:6]

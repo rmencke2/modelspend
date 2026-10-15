@@ -13,6 +13,7 @@ This release is about **proof**: you can now measure models on your own cases an
 
 **Your own eval cases**
 - Only `id`, `category`, `messages` and `validators` are required. Cases can come from one `.jsonl` file, a folder of them, or `<dir>/calibration` plus `<dir>/heldout`.
+- `eval calibrate --show-failures` lists which cases each model failed and its shortened answer (printed to the screen only, never stored).
 - `modelspend eval check --fixtures my-cases.jsonl` costs nothing and catches bad JSON (with file and line), unknown fields or categories, duplicate ids, unknown or misconfigured validators, validators that reject a case's own `reference` answer or accept its `wrong` one, sets that share ids, and whether you have enough cases to ever clear your bar. `modelspend eval template <category>` prints a starter case, and `eval calibrate --dataset NAME` names the evidence you store.
 
 **See who clears your bar**
@@ -21,11 +22,12 @@ This release is about **proof**: you can now measure models on your own cases an
 Guide, validators and limits: [docs/own-evals.md](docs/own-evals.md).
 
 ## Verified live
-- **A small calibration run (OpenAI and Anthropic):** 7 models on 12 simple classification cases cost about $0.02. The check, calibration, evidence table and a route that selected a model on its measured verdict (with your bar named in the explanation) all worked.
+- **Calibration on a harder case set (OpenAI and Anthropic):** the 22 calibration cases of `examples/evals/support-tickets-hard` on 7 models cost about $0.13. Six models scored 22/22 and cleared the default bar; `gpt-4.1-nano` scored 19/22 (lower bound 0.67), fell below it, and is no longer chosen for classification. The check, evidence table and a route that selected a model on its measured verdict all worked.
+- **Held-out comparison:** on 8 cases the calibration never saw, ModelSpend matched the premium model's pass rate (8/8) at about 77% lower spend, while the cheapest model missed one (7/8). Eight cases give wide intervals (68-100%), ModelSpend receives your validators and may escalate while the baselines do not, and it did not escalate here.
 - **From earlier releases:** per-project and per-agent reports, hard and soft budgets, the Costs tab, aliases and conversation stickiness, failover on a bad key, and cross-vendor escalation.
 
 ## Not yet verified
-- **Telling models apart.** In the live run every model passed every case, so it did not show cheaper models being separated from stronger ones. Use cases where a cheaper model can plausibly fail (ambiguous inputs, misleading wording, edge cases).
+- **Telling models apart at scale.** Only one of seven models fell short, on one task type with 22 cases. An easy 12-case set separated nothing. Use cases where a cheaper model can plausibly fail (ambiguous inputs, misleading wording, edge cases).
 - **OpenAI strict structured output** (a `response_schema` call).
 - **Gemini and xAI** adapters (unit-tested against simulated responses only).
 - **Concurrent budget enforcement** across processes and the dashboard's budget form (tested with threads and generated data).

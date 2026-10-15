@@ -1,6 +1,6 @@
 # Your own evals and evidence bars (0.5)
 
-*Tested with unit tests, and run live once at small scale: 7 models on 12 simple classification cases cost about $0.02, the evidence table and a route using the measured verdict worked. Every model passed every case, so that run did not show models being told apart: use cases where a cheaper model can plausibly fail.*
+*Unit-tested and run live at small scale. With 12 simple cases every model passed every case (nothing separated). With the harder example set (22 calibration cases, about $0.13 for 7 models) six models scored 22/22 and `gpt-4.1-nano` scored 19/22 and fell below the default bar, so it is no longer chosen for classification; on 8 held-out cases ModelSpend matched the premium model's pass rate at about 77% lower spend. Small samples, wide intervals, one model separated: treat it as a demonstration of the mechanics, not a benchmark.*
 
 Public benchmarks rarely match your prompts: a cheaper model often handles *your* task as well as an expensive one, and sometimes
 worse. ModelSpend lets you settle that with your own cases, and set **how much proof you require** before it picks a model.
@@ -57,7 +57,7 @@ modelspend eval calibrate --mode live --budget 1 --fixtures my-cases.jsonl --dat
 ```
 
 Every model that passes the hard constraints (key, price, availability, limits) is run on every case, so the cost is roughly
-*cases x models x a small call*; `--budget` is a hard USD ceiling and the run stops before a call that could exceed it. Pass counts are stored in
+*cases x models x a small call*; `--budget` is a hard USD ceiling and the run stops before a call that could exceed it. `--show-failures` lists each failed case with the model's shortened answer (printed to the screen only, never stored), so you can tell a fair failure from a bad case. Pass counts are stored in
 `~/.modelspend/evidence.json` under the dataset name you give (it appears in route explanations). Writing **replaces** the earlier result for
 that model and category; it does not add to it, so measure a category with all its cases in one run.
 

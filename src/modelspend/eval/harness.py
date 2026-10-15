@@ -321,7 +321,8 @@ def render_markdown(rep: dict[str, Any]) -> str:
 
 
 async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str], budget_usd: float | None = None,
-                    use_sandbox: bool = False, dataset: str = "modelspend-calibration-v1") -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
+                    use_sandbox: bool = False, dataset: str = "modelspend-calibration-v1",
+                    failures: list[dict[str, Any]] | None = None) -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
     """Run every eligible model on every calibration task of each category; return measured evidence."""
     from datetime import date
     ev: dict[str, dict[str, EvidenceItem]] = {}
@@ -333,11 +334,15 @@ async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str],
                 stopped = f"stopped: next call's worst case would exceed the ${budget_usd:.4f} calibration budget"
                 return ev, spent, stopped
             ledger = Ledger(None)
+            why, shown = "", ""
             try:
                 resp, _ = await engine.run_single(req, cand, ledger)
-                ok = grade(t, resp.text, engine.sandbox_runner, use_sandbox)[0] if resp else False
-            except ProviderError:
-                ok = False
+                ok, fails = grade(t, resp.text, engine.sandbox_runner, use_sandbox) if resp else (False, ["no response"])
+                why, shown = "; ".join(fails), (resp.text if resp else "")
+            except ProviderError as e:
+                ok, why = False, f"provider error ({e.kind})"
+            if failures is not None and not ok:  # for `eval calibrate --show-failures`: terminal only, never stored
+                failures.append({"model": f"{cand.provider}/{cand.model}", "case": t.id, "category": t.category, "reason": why, "output": shown[:160]})
             spent += ledger.used
             slot = ev.setdefault(f"{cand.provider}/{cand.model}", {}).setdefault(
                 t.category, EvidenceItem(n=0, passes=0, dataset=dataset, measured_on=date.today()))

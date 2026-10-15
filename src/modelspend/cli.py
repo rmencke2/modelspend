@@ -869,6 +869,7 @@ def eval_template(category: str = typer.Argument("classification", help="Task ca
 def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: Optional[float] = None,
                    fixtures: Optional[Path] = None, sandbox: bool = False, catalog: Optional[str] = None,
                    dataset: Optional[str] = typer.Option(None, help="Name stored with the evidence (shown in route explanations). Default: your folder or file name."),
+                   show_failures: bool = typer.Option(False, "--show-failures", help="List each failed case with the model's (shortened) answer. Printed only: nothing is stored."),
                    write: bool = typer.Option(False, help="Merge results into the evidence overlay file (live mode only).")):
     """Measure per-model, per-category pass counts on the CALIBRATION split and (optionally) store them as routing evidence."""
     from .eval import calibrate, load_tasks
@@ -884,10 +885,15 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
             raise typer.Exit(2)
         eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), None)
     ds = dataset or (fixtures.stem if fixtures is not None and fixtures.is_file() else fixtures.name if fixtures is not None else "modelspend-calibration-v1")
-    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds))
+    fails: list[dict] = []
+    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds, fails if show_failures else None))
     typer.echo(("SIMULATED " if mode == "mock" else "") + f"calibration spend ${spent:.6f}" + (f" | {stopped}" if stopped else ""))
     for ref, cats in sorted(ev.items()):
         typer.echo(f"  {ref}: " + ", ".join(f"{c} {e.passes}/{e.n}" for c, e in sorted(cats.items())))
+    if show_failures:
+        typer.echo("\nfailed cases (the model's answer is shown shortened, on this screen only):" if fails else "\nno failed cases")
+        for f in fails:
+            typer.echo(f"  {f['model']}  {f['case']}: {f['reason'] or 'failed'}  -> {f['output']!r}")
     if write and mode == "live":
         write_evidence(cfg.evidence_path, ev)  # type: ignore[arg-type]
         typer.echo(f"evidence merged into {cfg.evidence_path}")

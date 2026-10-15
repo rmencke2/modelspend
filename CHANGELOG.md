@@ -13,7 +13,9 @@
   `modelspend eval template <category>` prints a starter case; `eval calibrate --dataset NAME` names the evidence.
 - **`modelspend evidence`** (and `GET /v1/evidence`; `GET /v1/policy` now lists thresholds): which models clear the bar for which category, and the cheapest that
   does. It uses the router's own functions, so the two cannot disagree.
-- Docs: docs/own-evals.md. Unit-tested (including a property test that the table and the router agree) and run live once at small scale (7 models x 12 simple classification cases, about $0.02): check, calibration, evidence table and a route using the measured verdict all worked; every model passed every case, so model discrimination is not yet shown.
+- `eval calibrate --show-failures` lists which cases each model failed and its shortened answer (printed only, never stored).
+- Example: `examples/evals/support-tickets-hard/` (22 calibration + 8 held-out cases with explicit labelling rules and traps: misleading keywords, negation, hidden instructions, other languages).
+- Docs: docs/own-evals.md. Unit-tested (including a property test that the table and the router agree) and run live at small scale: 7 models on the 22 calibration cases of examples/evals/support-tickets-hard for about $0.13: six scored 22/22 and cleared the default bar, `gpt-4.1-nano` scored 19/22 (lower bound 0.67, below the bar) and is no longer chosen for classification; on the 8 held-out cases ModelSpend matched the premium model's pass rate (8/8) at about 77% lower spend, while the cheapest model missed one (7/8). Small samples: wide intervals, one model separated.
 
 ## 0.4.0b1
 
