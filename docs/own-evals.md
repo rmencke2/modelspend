@@ -37,6 +37,9 @@ modelspend eval template extraction > my-cases.jsonl      # a starting point; ed
 Keep two sets if you can, `calibration/` (used to measure models) and `heldout/` (used to check the result), so you are not grading on
 cases you tuned against: `<folder>/calibration/*.jsonl` and `<folder>/heldout/*.jsonl`. A single file or a plain folder of `.jsonl` files also works.
 
+A worked, deliberately harder example (misleading keywords, negation, hidden instructions, other languages) lives in
+[`examples/evals/support-tickets-hard/`](../examples/evals/support-tickets-hard/README.md): copy it and change the tickets to yours.
+
 ## 2. Check them (free, no model is called)
 
 ```bash
