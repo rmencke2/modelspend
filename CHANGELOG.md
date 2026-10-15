@@ -9,9 +9,6 @@
   Salted-hash key only, 24 h expiry. Off with `sticky=False`, `MODELSPEND_STICKY=false` or `sticky_conversations: false`. Results carry `sticky`.
 - Fix: `preview --assume-keys --model ...` now assumes a key for the pinned model's provider.
 - Verified live on OpenAI and Anthropic (alias pin; held conversation; switch with stickiness off; unclassifiable follow-up inherits the category). See docs/aliases-and-stickiness.md.
-
-## Unreleased (after 0.3.0b1)
-
 - Fix: the overhead tile and report showed overhead cost as "unknown" when there were no overhead calls; it is now $0.
 - Fix: the daily chart repeated the same date on its x-axis for a one-day window.
 - Cross-vendor escalation was verified live (OpenAI nano -> Anthropic Sonnet, exactly one escalation, tokens and cost reconcile, overhead reported).
