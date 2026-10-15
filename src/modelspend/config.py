@@ -110,6 +110,8 @@ class Config:
     exclude_stale_pricing: bool = False
     allow_preview_models: bool = False
     allow_unpriced: bool = False  # run models without catalog pricing (cost reported as unknown)
+    aliases: dict[str, str] = field(default_factory=dict)  # name -> 'provider/model-id' (see aliases.py); a pinned, unrouted model
+    sticky: bool = True  # keep the model chosen for earlier turns of a conversation (MODELSPEND_STICKY=false to turn off)
     default_project: str | None = None  # attribution defaults (MODELSPEND_PROJECT / MODELSPEND_AGENT)
     default_agent: str | None = None
     default_max_output_tokens: int = 1024
@@ -171,6 +173,8 @@ class Config:
         return cls(
             api_keys=keys,
             key_sources=key_sources,
+            aliases={str(k): str(v) for k, v in (settings.get("aliases") or {}).items()},
+            sticky=_bool(e.get("MODELSPEND_STICKY"), bool(settings.get("sticky_conversations", True))),
             allow_models=list(settings.get("allow_models", [])),
             deny_models=list(settings.get("deny_models", [])),
             default_providers=provs,

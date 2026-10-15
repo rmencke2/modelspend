@@ -158,6 +158,9 @@ class RouteRequest(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
     # observe-only: run exactly this "provider/model-id" (no routing, failover or escalation); tokens, cost and tags are still recorded
     pin: str | None = None
+    # conversation stickiness: None = use the configured default (on). Only requests that carry earlier turns (assistant or tool
+    # messages) are affected: they keep the model chosen for the conversation unless it is no longer suitable or available.
+    sticky: bool | None = None
 
     @field_validator("project", "agent")
     @classmethod
@@ -280,7 +283,7 @@ class Exclusion(BaseModel):
 
 class TaskInfo(BaseModel):
     category: TaskCategory
-    basis: Literal["hint", "rules", "cache", "model", "fallback"]
+    basis: Literal["hint", "rules", "cache", "model", "fallback", "conversation"]
     confidence: Literal["high", "low"]
     required_tier: int
     note: str = ""
@@ -302,6 +305,7 @@ class Plan(BaseModel):
     catalog_version: str
     policy_version: str
     explanation: str = ""
+    sticky: str | None = None  # None | "held" (kept the conversation's model) | "released: <why>"
 
 
 class RouteResult(BaseModel):
@@ -343,6 +347,7 @@ class RouteResult(BaseModel):
     run_id: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     pinned: bool = False  # observe-only: the caller chose the model; no routing, failover or escalation
+    sticky: str | None = None  # conversation stickiness outcome for this request (see Plan.sticky)
     budget_warnings: list[str] = Field(default_factory=list)  # soft per-project/agent budgets that are near or over their limit
 
     def json_metadata(self) -> dict[str, Any]:

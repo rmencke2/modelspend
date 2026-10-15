@@ -28,7 +28,7 @@ from .providers.base import ProviderAdapter, ProviderRequest, ProviderResponse, 
 from .routing import Router
 from .sandbox import make_runner
 from .store import Store
-from .tasks import Classification, classify_rules, privacy_key
+from .tasks import Classification, classify_rules, conversation_key, is_continuation, privacy_key
 from .tokens import reservation_input_tokens
 from .types import (
     AttemptRecord, Candidate, Plan, Profile, RouteRequest, RouteResult, StreamEvent, TaskCategory, Usage, ValidationReport,
@@ -123,9 +123,13 @@ class Engine:
     # ================================================================ planning
     async def plan(self, req: RouteRequest, *, require_streaming: bool = False, ledger: Ledger | None = None) -> Plan:
         cl: Classification | None = None
+        sticky = self._sticky_record(req)
         if req.task_type is None and req.pin is None:  # pinned (observe-only) calls are never classified by a model
             cl = classify_rules(req.messages)
-            if cl.ambiguous and self.store is not None:
+            if cl.category == TaskCategory.unknown and sticky and sticky[1] and sticky[1] != "unknown":
+                # a follow-up like "and the refund?" says little by itself: it is the same kind of work as the conversation so far
+                cl = Classification(TaskCategory(sticky[1]), "conversation", "high", note="inherited from earlier turns of this conversation")
+            elif cl.ambiguous and self.store is not None:
                 key = privacy_key(self.store.salt(), req.messages)
                 hit = self.store.get_class(key)
                 if hit:
@@ -137,7 +141,24 @@ class Engine:
                         cl = Classification(got, "model", "high")
         return self.router.plan(req, classification=cl, require_streaming=require_streaming,
                                 budget_remaining=ledger.remaining if ledger else None,
-                                tokens_remaining=ledger.tokens_remaining if ledger else None)
+                                tokens_remaining=ledger.tokens_remaining if ledger else None,
+                                prefer=sticky[0] if sticky else None)
+
+    def _sticky_on(self, req: RouteRequest) -> bool:
+        return self.store is not None and req.pin is None and (self.cfg.sticky if req.sticky is None else req.sticky)
+
+    def _conversation_key(self, req: RouteRequest) -> str:
+        return conversation_key(self.store.salt(), req.messages, req.project, req.agent, req.run_id)  # type: ignore[union-attr]
+
+    def _sticky_record(self, req: RouteRequest) -> tuple[str, str | None] | None:
+        """(model, task category) this conversation has been using, for a request that carries earlier turns (else None: route freshly)."""
+        if not self._sticky_on(req) or not is_continuation(req.messages):
+            return None
+        return self.store.get_conversation(self._conversation_key(req))  # type: ignore[union-attr]
+
+    def _remember_conversation(self, req: RouteRequest, ref: str, category: str) -> None:
+        if self._sticky_on(req):
+            self.store.put_conversation(self._conversation_key(req), ref, category)  # type: ignore[union-attr]
 
     async def _model_classify(self, req: RouteRequest, ledger: Ledger) -> TaskCategory | None:
         """Optional cheap-model classification, used ONLY for ambiguous requests. Cost is accounted."""
@@ -412,6 +433,7 @@ class Engine:
         if counters["escalations"] or counters["failovers"] or counters["retries"]:
             expl += (f" Execution: {counters['retries']} retries, {counters['failovers']} failovers, "
                      f"{counters['escalations']} escalations; final model {cand.provider}/{cand.model}.")
+        self._remember_conversation(req, f"{cand.provider}/{cand.model}", plan.task.category.value)
         return RouteResult(
             request_id=plan.request_id, status=status, text=resp.text, tool_calls=resp.tool_calls,  # type: ignore[arg-type]
             finish_reason=resp.finish_reason, provider=cand.provider, model=cand.model, task=plan.task, profile=plan.profile,
@@ -426,7 +448,7 @@ class Engine:
             catalog_version=plan.catalog_version, policy_version=plan.policy_version,
             latency_ms=int((time.monotonic() - t0) * 1000),
             project=req.project, agent=req.agent, run_id=req.run_id, labels=dict(req.labels), pinned=req.pin is not None,
-            budget_warnings=self._soft_warnings(ledger))
+            sticky=plan.sticky, budget_warnings=self._soft_warnings(ledger))
 
     @staticmethod
     def _soft_warnings(ledger: Ledger) -> list[str]:

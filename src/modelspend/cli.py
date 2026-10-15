@@ -31,6 +31,8 @@ keys_app = typer.Typer(no_args_is_help=True, help="Set, list, test and remove AP
 providers_app = typer.Typer(no_args_is_help=True, help="Choose which providers ModelSpend may use by default.")
 models_app = typer.Typer(no_args_is_help=True, help="See which models are routable and turn individual models on or off.")
 sources_app = typer.Typer(no_args_is_help=True, help="Where each provider's official pricing page lives (change it if a URL moves).")
+alias_app = typer.Typer(no_args_is_help=True, help="Name the model you want for each kind of work (e.g. coding, classify) and use the name as --model / model=.")
+app.add_typer(alias_app, name="alias")
 budget_app = typer.Typer(no_args_is_help=True, help="Spending limits per project and/or agent (daily or monthly, in USD and/or tokens).")
 app.add_typer(budget_app, name="budget")
 app.add_typer(catalog_app, name="catalog")
@@ -116,6 +118,9 @@ def _request(prompt: Optional[str], providers: Optional[str], profile: str, budg
     if prompt is None or prompt == "-":
         prompt = sys.stdin.read()
     msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    if pin:
+        from .aliases import resolve as resolve_alias
+        pin = resolve_alias(pin, cfg.aliases)  # --model coding -> the model that alias points to
     if pin and not providers:
         providers = pin.split("/", 1)[0] if "/" in pin else None  # a pinned model implies its provider
     return RouteRequest(
@@ -139,7 +144,9 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
     """Estimate candidates and costs without making any generation call."""
     cfg = Config.from_env()
     if assume_keys:
-        for p in _providers(providers, cfg):
+        from .aliases import resolve as resolve_alias
+        pinned = resolve_alias(model, cfg.aliases) if model else None
+        for p in _providers(providers or (pinned.split("/", 1)[0] if pinned and "/" in pinned else None), cfg):  # a pinned model implies its provider
             cfg.api_keys.setdefault(p, "preview-only")
     cat = _catalog(cfg, catalog)
     eng = Engine(cat, cfg, {}, None)
@@ -313,6 +320,47 @@ def _store() -> Store:
 
 def _pct(p: Optional[float]) -> str:
     return "-" if p is None else f"{p:.0%}"
+
+
+@alias_app.command("set")
+def alias_set(name: str, model: str = typer.Argument(..., help="provider/model-id, e.g. anthropic/claude-sonnet-5-5"),
+              force: bool = typer.Option(False, "--force", help="Save even if the model is not in your catalog yet.")):
+    """Create or change an alias."""
+    from .aliases import set_alias
+    cfg = Config.from_env()
+    try:
+        n, r = set_alias(cfg, name, model, None if force else _catalog(cfg, None))
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"alias '{n}' -> {r}   use it as: modelspend route \"...\" --model {n}   or model=\"{n}\" on the local server")
+
+
+@alias_app.command("list")
+def alias_list(as_json: bool = typer.Option(False, "--json")):
+    """Show aliases and whether each target model is in the catalog, priced and has a key."""
+    from .aliases import describe
+    cfg = Config.from_env()
+    rows = describe(cfg, _catalog(cfg, None))
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        typer.echo("no aliases. Example: modelspend alias set coding anthropic/claude-sonnet-5-5")
+        return
+    for r in rows:
+        notes = [x for x, ok in (("not in catalog", r["in_catalog"]), ("no price", r["priced"]), ("no API key", r["has_key"])) if not ok]
+        typer.echo(f"{r['alias']:<20} -> {r['model']:<42} {'ok' if not notes else '; '.join(notes)}")
+
+
+@alias_app.command("remove")
+def alias_remove(name: str):
+    """Delete an alias."""
+    from .aliases import remove_alias
+    if not remove_alias(Config.from_env(), name):
+        typer.echo(f"no alias '{name}'", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"removed alias '{name}'")
 
 
 @budget_app.command("set")

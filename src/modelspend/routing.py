@@ -83,7 +83,9 @@ class Router:
         require_streaming: bool = False,
         budget_remaining: float | None = None,
         tokens_remaining: int | None = None,
+        prefer: str | None = None,
     ) -> Plan:
+        """`prefer` = the 'provider/model' the conversation has been using (conversation stickiness)."""
         providers = self.resolve_providers(req)
         validate_provider_options(req)
         pol = PROFILES[req.profile]
@@ -218,17 +220,46 @@ class Router:
             c.rank = i
         unsuitable.sort(key=key)
 
+        sticky, sticky_text = None, ""
+        if prefer and not req.pin:
+            held = next((c for c in suitable if f"{c.provider}/{c.model}" == prefer), None)
+            if held is not None:
+                cheapest = suitable[0]
+                if held is not cheapest:
+                    suitable.remove(held)
+                    suitable.insert(0, held)
+                    for i, c in enumerate(suitable, 1):
+                        c.rank = i
+                sticky = "held"
+                sticky_text = (f"Conversation stickiness: continuing on {prefer}, chosen for earlier turns (switching models mid-conversation can lose "
+                               f"provider-side prompt caching, which ModelSpend does not measure).")
+                if held is not cheapest and held.expected_cost_usd is not None and cheapest.expected_cost_usd is not None:
+                    sticky_text += (f" The cheapest suitable model for this turn alone would be {cheapest.provider}/{cheapest.model} "
+                                    f"(est. ${cheapest.expected_cost_usd:.6f} vs ${held.expected_cost_usd:.6f}).")
+            else:
+                why = next((f"no longer suitable for this task ({c.suitability_detail})" for c in unsuitable if f"{c.provider}/{c.model}" == prefer), None)
+                why = why or next((f"{e.stage}: {e.reason}" for e in excluded if f"{e.provider}/{e.model}" == prefer), None)
+                why = why or "not among the models available for this request"
+                sticky = f"released: {why}"
+                sticky_text = f"Conversation stickiness released ({prefer}: {why}); routing this turn normally."
+
         limit = 0 if req.pin else (req.escalation_limit if req.escalation_limit is not None else pol.escalation_default)
         plan = Plan(
             request_id=request_id or uuid.uuid4().hex[:12], task=task, profile=req.profile,
             candidates=suitable, unsuitable=unsuitable, excluded=excluded, input_tokens=in_tok,
             token_method=method, escalation_limit=limit,
-            ranking_basis="expected_cost" if all_priced else "tier_then_tokens",
+            ranking_basis="expected_cost" if all_priced else "tier_then_tokens", sticky=sticky,
             assumptions=self._assumptions(cl.category, cap, method),
             uncertainty=self._uncertainty(req, cl, suitable, method),
             catalog_version=self.catalog.version, policy_version=POLICY_VERSION,
         )
         plan.explanation = self._explain(plan, req)
+        if sticky == "held":
+            t = plan.task
+            plan.explanation = (f"Task '{t.category.value}' ({t.basis}, {t.confidence} confidence) under profile '{plan.profile.value}'. {sticky_text} "
+                                f"~{suitable[0].expected_total_tokens} tokens expected, up to {suitable[0].worst_case_total_tokens}.")
+        elif sticky_text:
+            plan.explanation = sticky_text + " " + plan.explanation
         if req.pin and suitable:
             plan.explanation = (f"Pinned by the caller: running {req.pin} exactly (observe-only: no routing, failover or escalation); "
                                 f"tokens, cost and tags are recorded. ~{suitable[0].expected_total_tokens} tokens expected, up to {suitable[0].worst_case_total_tokens}.")

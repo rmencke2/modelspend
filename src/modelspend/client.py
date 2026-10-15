@@ -5,6 +5,7 @@ import asyncio
 from typing import Any, AsyncIterator, Iterator
 
 from .catalog import Catalog
+from .aliases import resolve as resolve_alias
 from .config import Config
 from .engine import Engine
 from .providers import ProviderAdapter, build_adapters
@@ -41,7 +42,10 @@ class ModelSpend:
     def _req(self, messages: str | list[Any], kw: dict[str, Any]) -> RouteRequest:
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
-        return RouteRequest(messages=messages, **{**self._defaults, **kw})
+        merged = {**self._defaults, **kw}
+        if merged.get("pin"):
+            merged["pin"] = resolve_alias(merged["pin"], self.config.aliases)  # pin="coding" -> the model that alias points to
+        return RouteRequest(messages=messages, **merged)
 
     # ---- async ----
     async def aroute(self, messages: str | list[Any], **kw: Any) -> RouteResult:

@@ -78,17 +78,19 @@ def _tags_from_headers(headers: Any) -> dict[str, Any]:
     return out
 
 
-def _resolve_pin(model: str, catalog: Any) -> str:
-    """model='provider/id' or a bare catalog id -> 'provider/id' (observe-only: no routing)."""
+def _resolve_pin(model: str, catalog: Any, aliases: dict[str, str] | None = None) -> str:
+    """model='provider/id', an alias, or a bare catalog id -> 'provider/id' (observe-only: no routing)."""
     if "/" in model:
         return model
+    if aliases and model.strip().lower() in aliases:
+        return aliases[model.strip().lower()]
     hits = [m.ref for m in (catalog.models if catalog is not None else []) if m.id == model]
     if len(hits) == 1:
         return hits[0]
     if len(hits) > 1:
         raise InvalidRequest(f"model '{model}' exists under several providers ({', '.join(hits)}); use 'provider/model-id'", param="model")
-    raise InvalidRequest(f"unknown model '{model}'. Use model='auto' to let ModelSpend choose, or 'provider/model-id' for a catalog model "
-                         "(observe-only: no routing, tokens and cost are still recorded).", param="model")
+    raise InvalidRequest(f"unknown model '{model}'. Use model='auto' to let ModelSpend choose, an alias you defined (`modelspend alias set`), or "
+                         "'provider/model-id' for a catalog model (observe-only: no routing, tokens and cost are still recorded).", param="model")
 
 
 def to_route_request(body: dict[str, Any], cfg: Config, headers: Any = None, catalog: Any = None) -> tuple[RouteRequest, bool]:
@@ -104,7 +106,7 @@ def to_route_request(body: dict[str, Any], cfg: Config, headers: Any = None, cat
     if model not in ("auto", "modelspend/auto"):
         if not isinstance(model, str) or not model:
             raise InvalidRequest("model is required: 'auto' or a catalog model ('provider/model-id')", param="model")
-        pin = _resolve_pin(model, catalog)
+        pin = _resolve_pin(model, catalog, cfg.aliases)
     if not isinstance(body.get("messages"), list):
         raise InvalidRequest("messages is required", param="messages")
     msgs = []
@@ -173,7 +175,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.3.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.4.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:
@@ -344,6 +346,32 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
                                 until=parse_since(q.get("until")), limit=top)
         except ReportError as e:
             raise InvalidRequest(str(e))
+
+    # ---------------- aliases (pick the model by name) ----------------
+    @app.get("/v1/aliases", dependencies=[Depends(auth), Depends(host_guard)])
+    async def aliases_list():
+        from ..aliases import describe
+        return {"aliases": describe(cfg, engine.catalog)}
+
+    @app.put("/v1/aliases/{name}", dependencies=[Depends(auth), Depends(guard)])
+    async def aliases_put(name: str, request: Request):
+        from ..aliases import describe, set_alias
+        body = await _json(request)
+        extra = [k for k in body if k != "model"]
+        if extra or not isinstance(body.get("model"), str):
+            raise InvalidRequest('body must be {"model": "provider/model-id"}')
+        try:
+            n, _ = set_alias(cfg, name, body["model"], engine.catalog)
+        except ValueError as e:
+            raise InvalidRequest(str(e))
+        return {"alias": next(a for a in describe(cfg, engine.catalog) if a["alias"] == n)}
+
+    @app.delete("/v1/aliases/{name}", dependencies=[Depends(auth), Depends(guard)])
+    async def aliases_delete(name: str):
+        from ..aliases import remove_alias
+        if not remove_alias(cfg, name):
+            raise InvalidRequest(f"no alias '{name}'")
+        return {"removed": name}
 
     # ---------------- budgets (per project / agent) ----------------
     @app.get("/v1/budgets", dependencies=[Depends(auth), Depends(host_guard)])

@@ -30,6 +30,7 @@ create table if not exists budgets(
   id integer primary key autoincrement, project text, agent text, period text, limit_usd real, limit_tokens integer,
   mode text, created_ts real);
 create unique index if not exists budgets_scope on budgets(coalesce(project, ''), coalesce(agent, ''), period);
+create table if not exists conversations(key text primary key, model text, category text, ts real);
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
@@ -84,6 +85,28 @@ class Store:
     def put_class(self, key: str, category: str) -> None:
         self.db.execute("insert or replace into class_cache values(?,?,?)", (key, category, time.time()))
         self.db.commit()
+
+    # ---- conversation stickiness (salted-hash key -> model ref; no content) ---------------------------
+    STICKY_TTL_S = 24 * 3600.0
+    STICKY_MAX_ROWS = 20_000
+
+    def get_conversation(self, key: str) -> tuple[str, str | None] | None:
+        """(model ref, task category of the conversation so far) or None."""
+        r = self.db.execute("select model, category from conversations where key=? and ts >= ?", (key, time.time() - self.STICKY_TTL_S)).fetchone()
+        return (r[0], r[1]) if r else None
+
+    def put_conversation(self, key: str, model_ref: str, category: str | None = None) -> None:
+        """Remember the model (and task category) a conversation is using. An 'unknown' category never overwrites a known one."""
+        now = time.time()
+        with self.lock:
+            self.db.execute(
+                "insert into conversations(key, model, category, ts) values(?,?,?,?) on conflict(key) do update set model=excluded.model, ts=excluded.ts, "
+                "category=coalesce(nullif(excluded.category, 'unknown'), conversations.category, excluded.category)", (key, model_ref, category, now))
+            self.db.execute("delete from conversations where ts < ?", (now - self.STICKY_TTL_S,))
+            n = self.db.execute("select count(*) from conversations").fetchone()[0]
+            if n > self.STICKY_MAX_ROWS:
+                self.db.execute("delete from conversations where key in (select key from conversations order by ts limit ?)", (n - self.STICKY_MAX_ROWS,))
+            self.db.commit()
 
     # ---- recording --------------------------------------------------------------------
     def record(self, r: RouteResult) -> None:

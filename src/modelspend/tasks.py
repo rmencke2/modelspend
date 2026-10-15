@@ -33,7 +33,7 @@ _FENCE = re.compile(r"```.*?```", re.S)
 @dataclass
 class Classification:
     category: TaskCategory
-    basis: str  # hint | rules | cache | model | fallback
+    basis: str  # hint | rules | cache | model | fallback | conversation
     confidence: str  # high | low
     note: str = ""
     ambiguous: bool = False
@@ -66,6 +66,28 @@ def classify_rules(messages: list[Message]) -> Classification:
         pick = max(cands, key=lambda c: BASE_TIER[c])
         return Classification(pick, "rules", "low", f"ambiguous between {cands[0].value} and {cands[1].value}; chose the stricter", True)
     return Classification(top[0], "rules", "high", "")
+
+
+def is_continuation(messages: list[Message]) -> bool:
+    """True when the request carries earlier turns of a conversation (an assistant or tool message)."""
+    return any(m.role in ("assistant", "tool") for m in messages)
+
+
+def conversation_key(salt: bytes, messages: list[Message], project: str | None = None, agent: str | None = None,
+                     run_id: str | None = None) -> str:
+    """Salted HMAC that identifies a conversation without storing any of it.
+
+    With a run_id the key comes from the run (project, agent, run_id) and survives the first message changing (for example after a
+    client compacts its history). Without one it comes from the system prompt and first user message, which stay the same across the
+    turns of a chat. Different projects/agents never share a key."""
+    who = f"{project or ''}\0{agent or ''}"
+    if run_id:
+        material = f"run\0{run_id}\0{who}"
+    else:
+        sys_ = next((m.content or "" for m in messages if m.role == "system"), "")
+        first = next((m.content or "" for m in messages if m.role == "user"), "")
+        material = f"msg\0{who}\0{sys_.strip().lower()}\0{first.strip().lower()}"
+    return hmac.new(salt, material.encode(), hashlib.sha256).hexdigest()
 
 
 def privacy_key(salt: bytes, messages: list[Message]) -> str:

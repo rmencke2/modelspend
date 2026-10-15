@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0b1 - unreleased
+
+- **Model aliases.** `modelspend alias set coding anthropic/claude-sonnet-5-5`, then `--model coding`, `model="coding"` on the local server, or `pin="coding"`
+  in the SDK. An alias is a pinned model (no routing); tokens, cost, tags, reports and budgets still work. `GET/PUT/DELETE /v1/aliases`.
+- **Conversation stickiness.** Requests that carry earlier turns keep the model chosen for the conversation unless it is no longer suitable
+  or available (then it is released, with the reason). Follow-ups that cannot be classified inherit the conversation's task category.
+  Salted-hash key only, 24 h expiry. Off with `sticky=False`, `MODELSPEND_STICKY=false` or `sticky_conversations: false`. Results carry `sticky`.
+- Fix: `preview --assume-keys --model ...` now assumes a key for the pinned model's provider.
+- Both features are tested with mocked providers, not yet live. See docs/aliases-and-stickiness.md.
+
 ## Unreleased (after 0.3.0b1)
 
 - Fix: the overhead tile and report showed overhead cost as "unknown" when there were no overhead calls; it is now $0.
