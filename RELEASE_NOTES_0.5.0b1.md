@@ -37,6 +37,7 @@ Guide, validators and limits: [docs/own-evals.md](docs/own-evals.md).
 
 ## Know before you use it
 - **Your validators are your definition of "good".** ModelSpend measures only what they check, and small numbers of cases give wide intervals. A pass means your checks passed, not that the answer is right.
+- **One calibration run is one sample.** Models are not perfectly repeatable (in a live check the same model scored 19/22, then 20/22 on a re-run); a model close to a bar can flip between runs. Each case counts once.
 - Evidence is per model and per **task category**. It applies when a request is classified into that category (by the rules, or via `task_type`). Evidence ages: models change under the same name, and ModelSpend does not re-measure on its own. Writing evidence **replaces** the earlier result for that model and category.
 - `eval calibrate` runs every eligible model on every case, so the cost is roughly cases x models x a small call. `--budget` is a hard USD ceiling.
 - Your thresholds apply under every profile. A lax bar (for example `--basis observed` on a dozen cases) makes ModelSpend trust thin evidence, which is your call; `modelspend thresholds list` shows the bar that applies to each category, and where it came from.

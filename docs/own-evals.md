@@ -57,7 +57,7 @@ modelspend eval calibrate --mode live --budget 1 --fixtures my-cases.jsonl --dat
 ```
 
 Every model that passes the hard constraints (key, price, availability, limits) is run on every case, so the cost is roughly
-*cases x models x a small call*; `--budget` is a hard USD ceiling and the run stops before a call that could exceed it. `--show-failures` lists each failed case with the model's shortened answer (printed to the screen only, never stored), so you can tell a fair failure from a bad case. Pass counts are stored in
+*cases x models x a small call*; `--budget` is a hard USD ceiling and the run stops before a call that could exceed it. `--show-failures` lists each failed case with the model's shortened answer (printed to the screen only, never stored), so you can tell a fair failure from a bad case. In a live check on the example set it showed one small model answering `billing` for "My invoice PDF downloads as a blank page" (a malfunction, so a bug under the rules: it followed the keyword) and writing a paragraph because the ticket told it to explain its reasoning (it obeyed an instruction inside the ticket): both fair failures, and exactly the traps the cases were written for. Pass counts are stored in
 `~/.modelspend/evidence.json` under the dataset name you give (it appears in route explanations). Writing **replaces** the earlier result for
 that model and category; it does not add to it, so measure a category with all its cases in one run.
 
@@ -98,5 +98,6 @@ modelspend restart                                           # a running server 
 - Measured quality is **only as good as your validators and cases**, and small n gives wide intervals. A pass means "your checks passed", not "the answer is right".
 - Evidence is per model and per **task category**. It applies when a request is classified into that category (by the rules, or by passing `task_type`);
   requests that cannot be classified fall back to the conservative default.
+- **One run is one sample.** Models are not perfectly repeatable: in a live check the same model scored 19/22 on one run and 20/22 on the next. That does not matter far from the bar, but a model close to it can flip between runs; add cases, or look at it again, before relying on a borderline verdict. (Repeating the same case does not add independent evidence, so ModelSpend counts each case once.)
 - Evidence ages: models change under the same name, and ModelSpend does not re-measure on its own (`measured_on` is stored). Re-run `calibrate` when it matters.
 - Calibration runs each model without ModelSpend's retries or escalation, one call per case, so the numbers describe the models themselves.
