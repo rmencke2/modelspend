@@ -1,6 +1,6 @@
 # Aliases and conversation stickiness (0.4)
 
-*Both are tested with mocked providers. They have not been exercised against live providers yet.*
+*Verified live on OpenAI and Anthropic (an alias pinned its model; a follow-up turn stayed on the conversation's model and inherited its task category; with stickiness off it was routed afresh). Cache effects are not measured.*
 
 ModelSpend can choose the model for you, but many people prefer to choose it themselves, and a chat that changes model on every turn is
 a bad experience. These two features address that.
@@ -46,7 +46,7 @@ How it behaves:
   model offers (for example, a chat about tickets suddenly asks for code), stickiness is **released** for that turn, with the reason in
   the explanation, and the new model becomes the conversation's model.
 - **Short follow-ups** such as "and the refund?" cannot be classified on their own, so they inherit the task category of the earlier turns
-  instead of defaulting to a stronger, more expensive model.
+  instead of defaulting to a stronger, more expensive model. In one live check, the same follow-up routed to a tier-2 reasoning model when stickiness was off, and cost about five times more than on the conversation's own model (a single example, not a benchmark).
 - **Escalation and failover** work as before; whichever model ends up answering becomes the conversation's model.
 - The result says what happened: `sticky: "held"` or `"released: <why>"` (also in `plan.sticky`, and in the explanation, which names the cheaper model
   you would have got for that turn alone, so the price of stickiness is visible).

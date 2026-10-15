@@ -8,7 +8,7 @@
   or available (then it is released, with the reason). Follow-ups that cannot be classified inherit the conversation's task category.
   Salted-hash key only, 24 h expiry. Off with `sticky=False`, `MODELSPEND_STICKY=false` or `sticky_conversations: false`. Results carry `sticky`.
 - Fix: `preview --assume-keys --model ...` now assumes a key for the pinned model's provider.
-- Both features are tested with mocked providers, not yet live. See docs/aliases-and-stickiness.md.
+- Verified live on OpenAI and Anthropic (alias pin; held conversation; switch with stickiness off; unclassifiable follow-up inherits the category). See docs/aliases-and-stickiness.md.
 
 ## Unreleased (after 0.3.0b1)
 

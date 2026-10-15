@@ -18,7 +18,7 @@
 
 - **Automatic price refresh is LLM-assisted and unverified live.** It is tested with scripted models and a real browser against fake pages, but not yet against the real OpenAI/Google/xAI pages. Verification catches invented numbers, not a hostile page; review before applying (see [pricing-refresh](pricing-refresh.md)).
 - **Budgets (0.3) are single-machine.** Enforcement relies on SQLite write transactions shared by the processes using one usage database; it is tested with threads and separate connections, not across machines or network file systems. Windows are UTC. USD limits count only priced calls. Not yet exercised against live providers.
-- **Aliases and conversation stickiness (0.4) are tested with mocked providers only.** Stickiness never weighs the cost of switching against the saving and does not measure prompt-cache effects; conversations are recognised by their first message (or `run_id`). See [aliases-and-stickiness](aliases-and-stickiness.md).
+- **Aliases and conversation stickiness (0.4) were verified live on a small scale.** Stickiness never weighs the cost of switching against the saving and does not measure prompt-cache effects; conversations are recognised by their first message (or `run_id`). See [aliases-and-stickiness](aliases-and-stickiness.md).
 
 ## Roadmap
 
