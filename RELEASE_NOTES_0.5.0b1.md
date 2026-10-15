@@ -24,11 +24,11 @@ Guide, validators and limits: [docs/own-evals.md](docs/own-evals.md).
 ## Verified live
 - **Calibration on a harder case set (OpenAI and Anthropic):** the 22 calibration cases of `examples/evals/support-tickets-hard` on 7 models cost about $0.13. Six models scored 22/22 and cleared the default bar; `gpt-4.1-nano` scored 19/22 (lower bound 0.67), fell below it, and is no longer chosen for classification. The check, evidence table and a route that selected a model on its measured verdict all worked.
 - **Held-out comparison:** on 8 cases the calibration never saw, ModelSpend matched the premium model's pass rate (8/8) at about 77% lower spend, while the cheapest model missed one (7/8). Eight cases give wide intervals (68-100%), ModelSpend receives your validators and may escalate while the baselines do not, and it did not escalate here.
+- **OpenAI structured output** (`response_schema`, strict and non-strict) on `gpt-4.1-nano`: valid JSON, validation passed, no escalation. The live test also found the repeated-sync-call `Event loop is closed` bug, fixed after the 0.5.0b1 tag (see CHANGELOG), so use the next release or `main` if you call the sync SDK more than once.
 - **From earlier releases:** per-project and per-agent reports, hard and soft budgets, the Costs tab, aliases and conversation stickiness, failover on a bad key, and cross-vendor escalation.
 
 ## Not yet verified
 - **Telling models apart at scale.** Only one of seven models fell short, on one task type with 22 cases. An easy 12-case set separated nothing. Use cases where a cheaper model can plausibly fail (ambiguous inputs, misleading wording, edge cases).
-- **OpenAI strict structured output** (a `response_schema` call).
 - **Gemini and xAI** adapters (unit-tested against simulated responses only).
 - **Concurrent budget enforcement** across processes and the dashboard's budget form (tested with threads and generated data).
 - The **Docker code sandbox** and **automatic price refresh** against the real provider pages.
