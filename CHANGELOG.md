@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0b2 - unreleased
+## 0.5.0b2 - 2026-10-15
 
 - **Fix: second sync call failed with `Event loop is closed`.** `ModelSpend.route/preview/stream` ran each call on a fresh `asyncio.run()` loop, but provider
   SDK clients are cached and stay bound to the first loop, so any script making two sync calls on one object failed (found in the OpenAI structured-output live test, which then passed live for both strict and non-strict schemas).
