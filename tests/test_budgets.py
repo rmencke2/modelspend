@@ -329,9 +329,9 @@ def test_prune_deletes_old_usage_but_keeps_budgets_and_recent_rows(store):
         store.db.execute("update requests set ts=? where id=?", (time.time() - age_days * 86400, rid))
     store.db.commit()
     cutoff = time.time() - 30 * 86400
-    assert store.prune(cutoff, dry_run=True) == {"requests": 2, "attempts": 2}
+    assert store.prune(cutoff, dry_run=True) == {"requests": 2, "attempts": 2, "shadow": 0}
     assert store.db.execute("select count(*) from requests").fetchone()[0] == 3  # dry run changes nothing
-    assert store.prune(cutoff) == {"requests": 2, "attempts": 2}
+    assert store.prune(cutoff) == {"requests": 2, "attempts": 2, "shadow": 0}
     assert [r[0] for r in store.db.execute("select id from requests")] == ["new"]
     assert store.db.execute("select count(*) from attempts").fetchone()[0] == 1
     assert len(list_budgets(store)) == 1

@@ -349,3 +349,107 @@ async def test_aggregate_evidence_and_prune(catalog, cfg):
     assert all(i.dataset == "shadow" and i.source == "modelspend shadow" and i.n == 2 for i in ev.values())
     store.prune(1e12)
     assert rows(store) == []
+
+
+# ---- 0.7 (3/4): routing can use shadow results as evidence ----
+def fill(store, ref="openai/synthetic-openai-small", category="analysis", n=40, passes=40):
+    prov, model = ref.split("/")
+    for i in range(n):
+        store.record_shadow(request_id=f"x{i}", project=None, agent=None, category=category, used_provider="openai", used_model="synthetic-openai-large",
+                            cand_provider=prov, cand_model=model, method="exact", verdict="pass" if i < passes else "fail", reason="r",
+                            used_cost=0.01, cand_cost=0.001, judge_cost=0.0, cand_input=5, cand_output=5)
+
+
+async def plan_for(eng, **kw):
+    r = RouteRequest(messages=[{"role": "user", "content": "Analyse the trade-offs of A versus B."}], providers=["openai"],
+                     task_type=TaskCategory.analysis, **kw)
+    return await eng.plan(r)
+
+
+def refs(cands):
+    return [f"{c.provider}/{c.model}" for c in cands]
+
+
+SMALL = "openai/synthetic-openai-small"
+
+
+async def test_routing_uses_shadow_evidence_only_after_you_apply_it(catalog, cfg):
+    store = Store(":memory:")
+    fill(store)
+    off, _ = make_engine(catalog, cfg, {}, store=store)
+    p = await plan_for(off)
+    assert SMALL in refs(p.unsuitable) and SMALL not in refs(p.candidates)  # analysis needs more than a tier-1 prior: no evidence, no routing
+
+    cfg.shadow = ShadowSettings(use_as_evidence=True)
+    on, _ = make_engine(catalog, cfg, {}, store=store)
+    p = await plan_for(on)
+    small = next(c for c in p.candidates if f"{c.provider}/{c.model}" == SMALL)
+    assert small.suitability_basis == "measured" and "'shadow'" in small.suitability_detail and small.evidence_lower_bound > 0.9
+    assert refs(p.candidates)[0] == SMALL  # cheapest suitable model first
+
+
+async def test_shadow_evidence_below_the_bar_does_not_qualify_a_model(catalog, cfg):
+    store = Store(":memory:")
+    fill(store, n=40, passes=28)
+    cfg.shadow = ShadowSettings(use_as_evidence=True)
+    eng, _ = make_engine(catalog, cfg, {}, store=store)
+    p = await plan_for(eng)
+    assert SMALL in refs(p.unsuitable) and "lower bound" in next(c for c in p.unsuitable if f"{c.provider}/{c.model}" == SMALL).suitability_detail
+
+
+async def test_your_own_eval_evidence_always_wins_over_shadow_evidence(catalog, cfg):
+    from modelspend.catalog.models import EvidenceItem
+    store = Store(":memory:")
+    fill(store)  # shadow says: clears
+    catalog.get(SMALL).evidence["analysis"] = EvidenceItem(n=30, passes=15, dataset="my-own-evals")  # your measurement says: does not
+    cfg.shadow = ShadowSettings(use_as_evidence=True)
+    eng, _ = make_engine(catalog, cfg, {}, store=store)
+    p = await plan_for(eng)
+    assert SMALL in refs(p.unsuitable) and catalog.get(SMALL).evidence["analysis"].dataset == "my-own-evals"
+
+
+async def test_shadow_evidence_is_withdrawn_when_reverted_or_pruned(catalog, cfg):
+    store = Store(":memory:")
+    fill(store)
+    cfg.shadow = ShadowSettings(use_as_evidence=True)
+    eng, _ = make_engine(catalog, cfg, {}, store=store)
+    assert SMALL in refs((await plan_for(eng)).candidates)
+    store.prune(1e12)  # the measurements are gone
+    eng.refresh_shadow_evidence(force=True)
+    assert SMALL in refs((await plan_for(eng)).unsuitable) and "analysis" not in catalog.get(SMALL).evidence
+    fill(store)
+    eng.refresh_shadow_evidence(force=True)
+    assert SMALL in refs((await plan_for(eng)).candidates)
+    cfg.shadow.use_as_evidence = False  # `shadow revert` on a running engine
+    eng.refresh_shadow_evidence()
+    assert SMALL in refs((await plan_for(eng)).unsuitable)
+
+
+async def test_a_reloaded_catalog_gets_shadow_evidence_again(catalog, cfg):
+    from modelspend import Catalog
+    from modelspend.catalog import shipped_catalog_path
+    store = Store(":memory:")
+    fill(store)
+    cfg.shadow = ShadowSettings(use_as_evidence=True)
+    eng, _ = make_engine(catalog, cfg, {}, store=store)
+    await plan_for(eng)
+    fresh = Catalog.load(shipped_catalog_path("synthetic_test_catalog.json"))
+    eng.set_catalog(fresh)
+    assert SMALL in refs((await plan_for(eng)).candidates) and fresh.get(SMALL).evidence["analysis"].dataset == "shadow"
+
+
+async def test_no_shadowing_of_answers_from_a_model_that_qualified_by_shadow_evidence(catalog, cfg):
+    """Otherwise 'A is close to B', 'B is close to C' ... would chain and quality could erode with nothing anchoring it."""
+    store = Store(":memory:")
+    fill(store, ref="openai/synthetic-openai-mid")  # the middle model qualified on shadow evidence, so a cheaper model (small) exists to tempt a chain
+    cfg.shadow = ShadowSettings(enabled=True, sample_rate=1.0, use_as_evidence=True)
+    eng, _ = make_engine(catalog, cfg, {"openai": "a considered analysis"}, store=store)
+    r = RouteRequest(messages=[{"role": "user", "content": "Analyse the trade-offs of A versus B."}], providers=["openai"], task_type=TaskCategory.analysis)
+    before = len(rows(store))
+    res = await eng.run(r)
+    await eng.shadow.drain()
+    assert res.model == "synthetic-openai-mid"  # routing chose it on shadow evidence ...
+    assert len(rows(store)) == before  # ... so this answer is not used as a reference
+    await eng.run(r.model_copy(update={"pin": LARGE}))
+    await eng.shadow.drain()
+    assert len(rows(store)) > before  # a pinned (anchored) answer still is

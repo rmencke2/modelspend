@@ -155,7 +155,7 @@ def preview(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '
         for p in _providers(providers or (pinned.split("/", 1)[0] if pinned and "/" in pinned else None), cfg):  # a pinned model implies its provider
             cfg.api_keys.setdefault(p, "preview-only")
     cat = _catalog(cfg, catalog)
-    eng = Engine(cat, cfg, {}, None)
+    eng = Engine(cat, cfg, {}, Store(cfg.db_path) if cfg.shadow.use_as_evidence else None, shadow=False)  # a store only so `shadow apply` evidence is seen
     eng.router.available = set(cfg.api_keys)
     try:
         plan = asyncio.run(eng.plan(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced,
@@ -710,7 +710,7 @@ def prune(older_than: str = typer.Argument(..., help="Delete usage recorded befo
         typer.echo("error: give a cutoff such as 90d or 2026-07-01 ('all' is not accepted here)", err=True)
         raise typer.Exit(2)
     n = _store().prune(cutoff, dry_run=not yes)
-    typer.echo(f"{'deleted' if yes else 'would delete'} {n['requests']} request(s) and {n['attempts']} attempt(s) older than {older_than}"
+    typer.echo(f"{'deleted' if yes else 'would delete'} {n['requests']} request(s), {n['attempts']} attempt(s) and {n['shadow']} shadow comparison(s) older than {older_than}"
                + ("" if yes else "  (add --yes to delete)"))
 
 

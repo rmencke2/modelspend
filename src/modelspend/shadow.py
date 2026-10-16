@@ -96,6 +96,29 @@ def shadow_evidence(store: Store) -> dict[tuple[str, str], EvidenceItem]:
     return out
 
 
+def apply_shadow_evidence(catalog: Any, ev: dict[tuple[str, str], EvidenceItem]) -> int:
+    """Let routing see shadow results. Your own eval evidence always wins: shadow evidence only fills gaps, and is withdrawn when it disappears.
+    Returns how many (model, task) entries are currently shadow-backed."""
+    n = 0
+    for m in catalog.models:
+        for cat in [c for c, e in m.evidence.items() if e.dataset == SHADOW_DATASET and (m.ref, c) not in ev]:
+            del m.evidence[cat]  # pruned or reverted
+    for (ref, cat), item in ev.items():
+        try:
+            m = catalog.get(ref)
+        except Exception:  # noqa: BLE001 - a model that left the catalog
+            continue
+        cur = m.evidence.get(cat)
+        if cur is None or cur.dataset == SHADOW_DATASET:
+            m.evidence[cat] = item
+            n += 1
+    return n
+
+
+def chosen_on_shadow_evidence(used: Candidate) -> bool:
+    return used.suitability_basis == "measured" and f"on '{SHADOW_DATASET}'" in used.suitability_detail
+
+
 # ---- choosing what to try ----------------------------------------------------------------------------------------------
 def pick_candidates(pool: list[Candidate], used: Candidate, have: dict[str, int], k: int, target_n: int) -> list[Candidate]:
     """Cheaper models, fewest comparisons first (explore where evidence is thin), cheapest first among equals. Models that already
@@ -135,6 +158,8 @@ class Shadow:
                 return False
             if plan.task.category == TaskCategory.unknown or used.expected_cost_usd is None:
                 return False
+            if chosen_on_shadow_evidence(used):
+                return False  # comparing against an answer from a model that itself qualified by shadow evidence would chain "close enough" steps: quality could erode
             if self.rng.random() >= s.sample_rate:
                 return False
             if len(self._tasks) >= MAX_PENDING:

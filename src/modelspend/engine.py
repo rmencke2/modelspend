@@ -125,9 +125,26 @@ class Engine:
         """Use a freshly loaded catalog (e.g. after prices were updated) without restarting."""
         self.catalog = catalog
         self.router.catalog = catalog
+        self._shadow_ev_at = 0.0  # the new catalog has no shadow evidence applied yet
+
+    def refresh_shadow_evidence(self, force: bool = False) -> None:
+        """If `shadow apply` was run, routing sees shadow results as evidence (where you have none of your own). Cached for 30 s."""
+        if self.store is None or not self.cfg.shadow.use_as_evidence:
+            if getattr(self, "_shadow_ev_n", 0):  # reverted while running: withdraw it
+                from .shadow import apply_shadow_evidence
+                apply_shadow_evidence(self.catalog, {})
+                self._shadow_ev_n = 0
+            return
+        now = time.monotonic()
+        if not force and now - getattr(self, "_shadow_ev_at", 0.0) < 30.0:
+            return
+        from .shadow import apply_shadow_evidence, shadow_evidence
+        self._shadow_ev_at = now
+        self._shadow_ev_n = apply_shadow_evidence(self.catalog, shadow_evidence(self.store))
 
     # ================================================================ planning
     async def plan(self, req: RouteRequest, *, require_streaming: bool = False, ledger: Ledger | None = None) -> Plan:
+        self.refresh_shadow_evidence()
         cl: Classification | None = None
         sticky = self._sticky_record(req)
         if req.task_type is None and req.pin is None:  # pinned (observe-only) calls are never classified by a model

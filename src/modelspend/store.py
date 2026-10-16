@@ -169,16 +169,17 @@ class Store:
             self.db.commit()
 
     def prune(self, older_than_ts: float, dry_run: bool = False) -> dict[str, int]:
-        """Delete requests (and their attempts) recorded before the given time. Budgets and the classifier cache are untouched."""
+        """Delete requests (and their attempts) and shadow comparisons recorded before the given time. Budgets and the classifier cache are untouched."""
         with self.lock:
             n = self.db.execute("select count(*) from requests where ts < ?", (older_than_ts,)).fetchone()[0]
             a = self.db.execute("select count(*) from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,)).fetchone()[0]
-            if not dry_run and n:
+            sh = self.db.execute("select count(*) from shadow_results where ts < ?", (older_than_ts,)).fetchone()[0]
+            if not dry_run and (n or sh):
                 self.db.execute("delete from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,))
                 self.db.execute("delete from requests where ts < ?", (older_than_ts,))
                 self.db.execute("delete from shadow_results where ts < ?", (older_than_ts,))
                 self.db.commit()
-        return {"requests": n, "attempts": a}
+        return {"requests": n, "attempts": a, "shadow": sh}
 
     # ---- queries ----------------------------------------------------------------------
     def latency_p50(self, provider: str, model: str) -> tuple[float, int] | None:
