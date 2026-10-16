@@ -2,7 +2,7 @@
 
 ModelSpend shows **where your LLM tokens and money go, per project and per agent**, enforces **budgets before the spend**, and can **route each task to the lowest-cost model expected to suit it**. It uses your own API keys for OpenAI, Anthropic, Google and xAI, stores no prompts, runs locally, and is Apache-2.0.
 
-This release is about **finding the savings without writing a single eval case**: ModelSpend learns from your own traffic which cheaper model is safe to use for each kind of work, shows what that would save, and only then lets routing use it. It is a **beta, and this feature has not yet run against live providers** (see "Not yet verified").
+This release is about **finding the savings without writing a single eval case**: ModelSpend learns from your own traffic which cheaper model is safe to use for each kind of work, shows what that would save, and only then lets routing use it. It is a **beta**; the feature has had one small live run (see "Not yet verified").
 
 ## What's new
 
@@ -22,6 +22,8 @@ This release is about **finding the savings without writing a single eval case**
 - **No chaining:** answers from a model that qualified by shadow evidence are never used as the reference for further comparisons, so "A is close to B, B is close to C" cannot erode quality with nothing anchoring it. (Consequence: that task type's evidence stops growing until you re-measure.)
 
 Guide, privacy, cost and limits: [docs/shadow.md](docs/shadow.md). Try it for a few cents: `python examples/shadow_live_check.py`.
+
+**Why a failure happened** is shown, not just that it did: `modelspend shadow status` lists the reason codes per model, and the savings report calls out failures that were really **cut-offs at your `max_output_tokens`** (reasoning models need room to think) instead of blaming the model.
 
 ## Fixed
 
