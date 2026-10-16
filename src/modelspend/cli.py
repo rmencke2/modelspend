@@ -861,7 +861,7 @@ def eval_run(mode: str = typer.Option("mock", help="mock (simulated, free) or li
         if not budget or budget <= 0:
             typer.echo("live evaluation spends real money: pass --budget <USD> (hard ceiling).", err=True)
             raise typer.Exit(2)
-        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), None)
+        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval
         missing = [p for p in provs if p not in eng.adapters]
         if missing:
             typer.echo(f"no API key for: {', '.join(missing)}", err=True)
@@ -961,7 +961,7 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
         if not budget or budget <= 0:
             typer.echo("live calibration spends real money: pass --budget <USD>.", err=True)
             raise typer.Exit(2)
-        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), None)
+        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval
     ds = dataset or (fixtures.stem if fixtures is not None and fixtures.is_file() else fixtures.name if fixtures is not None else "modelspend-calibration-v1")
     fails: list[dict] = []
     ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds, fails if show_failures else None))

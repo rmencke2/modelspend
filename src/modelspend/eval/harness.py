@@ -195,6 +195,12 @@ def default_premium(engine: Engine, providers: list[str]) -> str:
     return max(c, key=lambda m: m.pricing.output_per_mtok).ref  # type: ignore[union-attr]
 
 
+# Live eval calls cost real money, so they are recorded in the usage ledger under their own project (filter with --project modelspend-eval).
+# Stickiness is off so that recording conversations can never change which model an eval case is routed to.
+EVAL_TAGS_RUN = {"project": "modelspend-eval", "agent": "eval-run", "sticky": False}
+EVAL_TAGS_CALIBRATE = {"project": "modelspend-eval", "agent": "calibrate", "sticky": False}
+
+
 async def evaluate(
     engine: Engine, tasks: list[EvalTask], providers: list[str], premium: str | None = None,
     budget_usd: float | None = None, mode: str = "simulated", use_sandbox: bool = False,
@@ -205,10 +211,10 @@ async def evaluate(
 
     for t in tasks:
         remaining = None if budget_usd is None else budget_usd - spent_total
-        base = dict(messages=t.messages, max_output_tokens=MAX_OUT, profile="economy")
+        base = dict(messages=t.messages, max_output_tokens=MAX_OUT, profile="economy", **EVAL_TAGS_RUN)
         prem_req = RouteRequest(providers=[prem_provider], allow_models=[premium], **base)
         cheap_req = RouteRequest(providers=providers, **base)
-        ms_req = RouteRequest(providers=providers, messages=t.messages, max_output_tokens=MAX_OUT, profile="balanced",
+        ms_req = RouteRequest(providers=providers, messages=t.messages, max_output_tokens=MAX_OUT, profile="balanced", **EVAL_TAGS_RUN,
                               validators=t.validators + (t.sandbox_validators if use_sandbox else []))
         prem_c = next((c for c in _eligible(engine, prem_req) if f"{c.provider}/{c.model}" == premium), None)
         cheap_c = sorted(_eligible(engine, cheap_req), key=lambda c: c.expected_cost_usd)[:1]
@@ -328,7 +334,7 @@ async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str],
     ev: dict[str, dict[str, EvidenceItem]] = {}
     spent, stopped = 0.0, None
     for t in tasks:
-        req = RouteRequest(providers=providers, messages=t.messages, max_output_tokens=MAX_OUT, profile="economy")
+        req = RouteRequest(providers=providers, messages=t.messages, max_output_tokens=MAX_OUT, profile="economy", **EVAL_TAGS_CALIBRATE)
         for cand in sorted(_eligible(engine, req), key=lambda c: (c.provider, c.model)):
             if budget_usd is not None and spent + cand.worst_case_cost_usd > budget_usd:
                 stopped = f"stopped: next call's worst case would exceed the ${budget_usd:.4f} calibration budget"

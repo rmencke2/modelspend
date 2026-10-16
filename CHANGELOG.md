@@ -8,6 +8,12 @@
   Cached-token semantics are per provider and overridable; model snapshot suffixes are merged; re-importing a source replaces it and overlapping imports warn. The file formats are
   based on documentation; the OpenAI completions-usage CSV export was checked against a real file (tokens only: it has no cost column), the others are not. Days with no usage (blank
   rows in the export) are kept as covered days, so ModelSpend calls on a day the provider reports empty are flagged. See docs/reconcile.md.
+- **Fix: live `eval run` and `eval calibrate` spend was missing from the usage ledger.** Found by reconciling with OpenAI's export: about 35,000 tokens (about 190 requests) on one day
+  were in OpenAI's numbers but not in `modelspend report`, because the eval commands ran without a usage store and `run_single` never recorded. Their calls are now recorded under
+  `project=modelspend-eval` (`agent=calibrate` or `eval-run`, task `eval`), so they show in reports, the Costs tab and reconciliation, and can be filtered out with
+  `--project`. Stickiness is forced off for eval requests so recording cannot change routing. Evals run before this release were not recorded and cannot be recovered.
+- **Reconcile output:** a ModelSpend row with zero tokens and nothing from the provider (a call that failed before billing) is no longer flagged, and the result line says why
+  provider-higher rows are not flagged instead of "all rows within tolerance".
 - **Fix: first use from two processes on one database could crash after the provider call.** `Store.salt()` selected then inserted, so two processes both seeing "no salt yet" made the
   second fail with `UNIQUE constraint failed: meta.k` (surfaced as a flaky concurrent-budget test, about 1 run in 6). It now keeps whichever salt won. Regression test included.
 

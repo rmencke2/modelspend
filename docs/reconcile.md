@@ -23,6 +23,10 @@ Nothing is fetched from the provider and no extra key is needed: you export the 
 - Cost is compared when the export has a cost column and every ModelSpend call in that row had a price. Otherwise only tokens are compared and the row says why.
 - Model names are matched after removing a trailing date, so `gpt-4.1-nano-2025-04-14` and `gpt-4.1-nano` are one row.
 
+## Eval runs are in the ledger too (from 0.6)
+
+`modelspend eval run --mode live` and `eval calibrate --mode live` spend real money. From 0.6 their calls are recorded like any other, under `project=modelspend-eval` (`agent=calibrate` or `eval-run`, task `eval`). They appear in `modelspend report`, the Costs tab and this comparison. To look at them alone or leave them out: `modelspend report --project modelspend-eval`. Evals run before 0.6 were not recorded; that is why a first reconciliation can show the provider far above ModelSpend on the days you ran them. (This was found by the first real reconciliation: about 35,000 tokens on one day were missing.)
+
 ## Cached tokens
 
 Providers disagree on whether the input-token column already contains cached tokens. The defaults: OpenAI, Google and xAI **include** them in input; Anthropic **excludes** them (cache read and cache write are separate columns). If your export differs, override per provider:

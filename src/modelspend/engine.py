@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .budgets import BudgetGuard, PeriodBudgetExceeded, Violation
@@ -471,8 +472,28 @@ class Engine:
         the caller-supplied ledger still holds the accounting for every attempt.
         """
         t0 = time.monotonic()
-        resp = await self._with_retries(req, cand, "initial", ledger, {"retries": 0})
+        status = "ok"
+        try:
+            resp = await self._with_retries(req, cand, "initial", ledger, {"retries": 0})
+        except BaseException:
+            status = "provider_error"
+            raise
+        finally:
+            self._record_single(req, cand, ledger, status, int((time.monotonic() - t0) * 1000))
         return resp, int((time.monotonic() - t0) * 1000)
+
+    def _record_single(self, req: RouteRequest, cand: Candidate, ledger: Ledger, status: str, latency_ms: int) -> None:
+        """Eval baselines and calibration calls spend real money: they belong in the usage ledger like any other call."""
+        if not self.store or not ledger.attempts:
+            return
+        total = Usage()
+        for a in ledger.attempts:
+            total = total + a.usage
+        self.store.record_row(
+            uuid.uuid4().hex[:12], req.profile.value, "eval", "n/a", cand.provider, cand.model, status, "n/a", 0, 0, 0,
+            cand.expected_cost_usd, ledger.spent if ledger.cost_complete else None, ledger.uncertain, req.max_budget_usd,
+            total.input_tokens + total.cache_read_tokens + total.cache_write_tokens, total.output_tokens, latency_ms, "", "",
+            ledger.attempts, cache_read=total.cache_read_tokens, reasoning=total.reasoning_tokens, total=ledger.tokens, tags=_tags(req))
 
     # ================================================================ streaming
     async def stream(self, req: RouteRequest) -> AsyncIterator[StreamEvent]:

@@ -290,3 +290,22 @@ def test_a_row_with_numbers_but_no_model_is_still_an_error():
         rc.parse_usage("date,model,input_tokens\n2026-10-10,,5\n", "openai")
     with pytest.raises(rc.ReconcileError, match="row 1: cannot read a date"):
         rc.parse_usage("date,model,input_tokens\n,,\n", "openai")  # a blank row without even a day is not a bucket
+
+
+def test_zero_token_modelspend_rows_are_not_flagged_and_the_summary_explains_provider_higher(store, tmp_path):
+    imp(store, tmp_path, CSV)
+    add(store, "openai", "gpt-4.1-nano", "2026-10-10", i=1000, o=500, cost=0.0006)
+    add(store, "openai", "gpt-4.1-nano", "2026-10-11", i=100, o=50)  # provider saw far more (other tools)
+    add(store, "openai", "gpt-4.1", "2026-10-10", i=0, o=0, outcome="error")  # a call that failed before anything was billed
+    rep = rc.compare(store)
+    by = {r["model"]: r for r in rep["rows"]}
+    assert by["gpt-4.1"]["tokens"]["status"] == "n/a" and not by["gpt-4.1"]["attention"]
+    assert rep["summary"]["ok"] and rep["summary"]["other_usage_rows"] == 1
+    text = rc.to_table(rep)
+    assert "nothing needs a look: ModelSpend is never above the provider" in text and "all rows within tolerance" not in text
+    assert "--exclusive" in text
+    clean = Store(":memory:")
+    imp(clean, tmp_path, CSV, name="c.csv")
+    add(clean, "openai", "gpt-4.1-nano", "2026-10-10", i=1000, o=500, cost=0.0006)
+    add(clean, "openai", "gpt-4.1-nano", "2026-10-11", i=2000, o=1000, cost=0.0012)
+    assert "Result: 1 of 1 rows match within 2%; nothing needs a look.\n" in rc.to_table(rc.compare(clean))

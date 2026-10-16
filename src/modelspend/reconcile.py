@@ -238,6 +238,9 @@ def judge(ms: float | None, prov: float | None, tol: float, floor: float, exclus
     """One number compared with the provider's. `attention` is True when this needs a human look."""
     if prov is None and ms is None:
         return {"status": "n/a", "attention": False, "diff": None, "note": ""}
+    if prov is None and not ms:
+        return {"status": "n/a", "attention": False, "diff": None,
+                "note": "ModelSpend recorded calls here that reported no tokens (failed before the provider billed anything): nothing to compare."}
     if prov is None:
         return {"status": "modelspend_only", "attention": True, "diff": None,
                 "note": "ModelSpend recorded this, the export has nothing for it: other key/project/org, or the export is not complete yet."}
@@ -335,6 +338,7 @@ def compare(store: Store, *, by_day: bool = False, tolerance: float = 0.02, excl
                "provider_cost": sum(r["provider_cost"] or 0 for r in rows) if any(r["provider_cost"] is not None for r in rows) else None,
                "modelspend_cost": sum(r["modelspend_cost"] or 0 for r in rows) if any(r["modelspend_cost"] is not None for r in rows) else None}
     summary["ok"] = summary["attention"] == 0
+    summary["other_usage_rows"] = sum(1 for r in rows if r["tokens"]["status"] in ("provider_higher", "provider_only") and not r["attention"])
     notes = ["Only calls made through ModelSpend are counted; the provider's numbers cover everything on the exported key/project/organization.",
              "Compared only for the days the export covers, per provider. Days are UTC.",
              "The provider's invoice is authoritative. This check shows where ModelSpend's numbers and the provider's disagree; it does not prove either right."]
@@ -374,7 +378,13 @@ def to_table(rep: dict[str, Any]) -> str:
         if n == 0:
             lines.append("  ".join("-" * w for w in widths))
     s = rep["summary"]
-    verdict = "all rows within tolerance" if s["ok"] else f"{s['attention']} row(s) need a look"
+    if not s["ok"]:
+        verdict = f"{s['attention']} row(s) need a look"
+    elif s["other_usage_rows"]:
+        verdict = (f"nothing needs a look: ModelSpend is never above the provider; in {s['other_usage_rows']} row(s) the provider reports more, "
+                   "which is expected if anything else uses this key (not flagged; use --exclusive if it does not)")
+    else:
+        verdict = "nothing needs a look"
     cov = "; ".join(f"{p}: {c['first_day']}..{c['last_day']}" for p, c in rep["coverage"].items())
     out = "\n".join(lines) + f"\n\nCompared days (UTC): {cov}\nResult: {s['match']} of {s['rows']} rows match within {rep['tolerance']:.0%}; {verdict}.\n"
     seen: set[str] = set()
