@@ -167,6 +167,16 @@ modelspend reconcile run
 
 It compares tokens and cost per model over the days the export covers and flags where ModelSpend recorded *more* than the provider billed. The provider's invoice stays authoritative. Guide and limits (including that the file formats are not yet verified against real exports): [docs/reconcile.md](docs/reconcile.md).
 
+## Find out which cheaper model is safe for *your* traffic (0.7)
+
+```bash
+modelspend shadow on          # opt in, capped, off by default
+modelspend savings            # per task type: spend now, the cheapest model that clears the evidence bar, projected saving
+modelspend shadow apply       # shows what would change; --yes lets routing use the results
+```
+
+A small sample of your real requests is also tried, in the background, on cheaper models and compared with the answer you used (your validators, an exact match, or a judge model). Only verdicts and counts are stored, never prompts or answers, and spend is capped per month. A model is only recommended when the **95% lower bound** of its pass rate clears the same bar routing uses. The savings are a **projection**, and "passed" means "as good as the answer you used", not "correct". The dashboard has a **Savings** tab. Guide, privacy, cost and limits: [docs/shadow.md](docs/shadow.md). Not yet run against live providers.
+
 ## Pick the model yourself, or keep a chat on one model (0.4)
 
 ```bash
@@ -230,7 +240,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Reconciling with provider usage](docs/reconcile.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Reconciling with provider usage](docs/reconcile.md) · [Shadow evaluation and savings](docs/shadow.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

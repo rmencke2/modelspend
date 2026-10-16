@@ -235,3 +235,85 @@ def test_cli_savings_table_and_json(run, tmp_path):
     assert j["totals"]["categories_ready"] == 1 and j["rows"][0]["recommended"]["model"] == SMALL
     assert run("savings", "--format", "xml").exit_code != 0 and run("savings", "--profile", "ultra").exit_code != 0
     assert run("savings", "--since", "soon").exit_code != 0
+
+
+# ---- server ----
+def _client(catalog, cfg, store):
+    from conftest import make_engine
+    from fastapi.testclient import TestClient
+    from modelspend.server.app import create_app
+    cfg.api_token = None
+    cfg.default_providers = ["openai"]
+    eng, _ = make_engine(catalog, cfg, {}, store=store)
+    return TestClient(create_app(eng, cfg), base_url="http://127.0.0.1:8787"), eng
+
+
+def test_server_savings_and_shadow_endpoints(catalog, cfg):
+    s = Store(":memory:")
+    traffic(s, n=100, cost=2.0)
+    shadow(s, n=40, passes=40)
+    c, eng = _client(catalog, cfg, s)
+    j = c.get("/v1/savings").json()
+    assert j["totals"]["categories_ready"] == 1 and j["rows"][0]["recommended"]["model"] == SMALL
+    assert c.get("/v1/savings?profile=economy&since=7d&project=nope").json()["rows"] == []
+    for bad in ("/v1/savings?profile=ultra", "/v1/savings?since=soon", "/v1/savings?nope=1"):
+        assert c.get(bad).status_code == 400, bad
+    st = c.get("/v1/shadow").json()
+    assert st["settings"]["enabled"] is False and st["active"] is False and st["comparisons"][0]["n"] == 40 and st["spent_this_month"] == 0
+
+
+def test_server_can_switch_shadow_on_and_off_without_a_restart_and_saves_it(catalog, cfg):
+    s = Store(":memory:")
+    c, eng = _client(catalog, cfg, s)
+    assert eng.shadow is None
+    hdr = {"Content-Type": "application/json"}
+    r = c.put("/v1/shadow", json={"enabled": True, "sample_rate": 0.5, "monthly_budget_usd": 2}, headers=hdr)
+    assert r.status_code == 200 and r.json()["active"] is True and r.json()["settings"]["sample_rate"] == 0.5
+    assert eng.shadow is not None and eng.cfg.shadow.enabled
+    saved = json.loads((cfg.home / "settings.json").read_text())["shadow"]
+    assert saved == {"enabled": True, "sample_rate": 0.5, "monthly_budget_usd": 2}
+    r = c.put("/v1/shadow", json={"enabled": False}, headers=hdr)
+    assert r.json()["active"] is False and eng.shadow is not None and not eng.cfg.shadow.enabled  # sampling stopped
+
+    for body in ({"sample_rate": 9}, {"nope": 1}, {"home": "/tmp/x"}, {"enabled": "yes"}):
+        bad = c.put("/v1/shadow", json=body, headers=hdr)
+        assert bad.status_code == 400, body
+    assert json.loads((cfg.home / "settings.json").read_text())["shadow"]["sample_rate"] == 0.5  # an invalid change changes nothing
+    assert c.put("/v1/shadow", content="not json", headers=hdr).status_code == 400
+    assert c.put("/v1/shadow", content='{"enabled": true}', headers={"Content-Type": "text/plain"}).status_code in (400, 415)  # writes need JSON
+
+
+def test_server_shadow_endpoints_are_local_and_token_protected(catalog, cfg):
+    from fastapi.testclient import TestClient
+    c, eng = _client(catalog, cfg, Store(":memory:"))
+    assert TestClient(c.app, base_url="http://attacker.test:8787").get("/v1/shadow").status_code == 403
+    assert TestClient(c.app, base_url="http://attacker.test:8787").get("/v1/savings").status_code == 403
+    cfg.api_token = "sekret"
+    assert c.get("/v1/shadow").status_code == 401 and c.get("/v1/savings").status_code == 401
+    ok = {"Authorization": "Bearer sekret", "Content-Type": "application/json"}
+    assert c.get("/v1/savings", headers=ok).status_code == 200 and c.put("/v1/shadow", json={"enabled": True}, headers=ok).status_code == 200
+
+
+def test_an_engine_built_for_evals_never_shadows_even_when_settings_say_so(catalog, cfg):
+    from conftest import make_engine
+    from modelspend.engine import Engine
+    cfg.shadow = ShadowSettings(enabled=True)
+    base, _ = make_engine(catalog, cfg, {}, store=Store(":memory:"))
+    eng = Engine(catalog, cfg, base.adapters, Store(":memory:"), shadow=False)
+    eng.set_shadow(ShadowSettings(enabled=True))
+    assert eng.shadow is None
+
+
+def test_the_dashboard_has_a_savings_tab_wired_to_the_new_endpoints(catalog, cfg):
+    c, _ = _client(catalog, cfg, Store(":memory:"))
+    html = c.get("/dashboard").text
+    for needle in ('id="nav-savings"', 'id="savings"', "/v1/savings", "/v1/shadow", "projection, not a measurement", "modelspend shadow apply", "loadSavings"):
+        assert needle in html, needle
+
+
+def test_the_live_check_example_is_valid_python_and_refuses_politely_when_shadow_is_off():
+    import ast
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "examples" / "shadow_live_check.py").read_text()
+    ast.parse(src)
+    assert "modelspend shadow set --rate 1 --budget 0.50" in src and "wait_for_shadow" in src and "SystemExit" in src

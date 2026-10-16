@@ -175,7 +175,7 @@ def completion_body(r: RouteResult) -> dict[str, Any]:
 
 def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callable[[], Any] | None = None) -> FastAPI:
     cfg = cfg or engine.cfg
-    app = FastAPI(title="ModelSpend", version="0.6.0b2", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
+    app = FastAPI(title="ModelSpend", version="0.7.0b1", docs_url=None, redoc_url=None, openapi_url=None)  # endpoints are documented in docs/openai-compat.md
 
     async def auth(request: Request) -> None:
         if not cfg.api_token:
@@ -360,6 +360,48 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
                                 until=parse_since(q.get("until")), limit=top)
         except ReportError as e:
             raise InvalidRequest(str(e))
+
+    # ---------------- savings and shadow evaluation ----------------
+    @app.get("/v1/savings", dependencies=[Depends(auth), Depends(host_guard)])
+    async def savings_view(request: Request):
+        """What each kind of work could save on a cheaper model, with the evidence (`?since=30d&profile=balanced&project=`). A projection, not a measurement."""
+        from ..report import ReportError, parse_since
+        from ..savings import build_savings
+        q = request.query_params
+        extra = [k for k in q if k not in ("since", "profile", "project")]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        if q.get("profile", "balanced") not in ("economy", "balanced", "high_assurance"):
+            raise InvalidRequest("profile must be economy, balanced or high_assurance", param="profile")
+        try:
+            return build_savings(engine.store, cfg, profile=q.get("profile", "balanced"), since=parse_since(q.get("since", "30d")), project=q.get("project") or None)
+        except ReportError as e:
+            raise InvalidRequest(str(e), param="since")
+
+    def _shadow_state() -> dict:
+        from dataclasses import asdict
+        from ..shadow import aggregate, spent_this_month
+        return {"settings": asdict(cfg.shadow), "active": engine.shadow is not None and cfg.shadow.enabled,
+                "spent_this_month": spent_this_month(engine.store) if engine.store else 0.0,
+                "comparisons": aggregate(engine.store) if engine.store else []}
+
+    @app.get("/v1/shadow", dependencies=[Depends(auth), Depends(host_guard)])
+    async def shadow_view():
+        return _shadow_state()
+
+    @app.put("/v1/shadow", dependencies=[Depends(auth), Depends(guard)])
+    async def shadow_put(request: Request):
+        """Change shadow settings on the running server and save them (validated first; an invalid change changes nothing)."""
+        from ..config import update_shadow_settings
+        body = await _json(request)
+        try:
+            new = update_shadow_settings(cfg.home, body)
+        except ValueError as e:
+            raise InvalidRequest(str(e))
+        engine.set_shadow(new)
+        return _shadow_state()
 
     # ---------------- aliases (pick the model by name) ----------------
     @app.get("/v1/aliases", dependencies=[Depends(auth), Depends(host_guard)])

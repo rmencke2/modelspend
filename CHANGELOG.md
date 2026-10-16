@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0b1 - 2026-10-17
+
+- **Shadow evaluation (off by default, opt-in).** A sample of real requests is also tried in the background on cheaper models and compared with the answer you used: your validators, else an
+  exact match, else a judge model. Only verdicts, fixed reason codes, costs and token counts are stored; never prompts, answers or judge output. Capped per UTC month (worst case checked before every
+  call), recorded in the ledger under `project=modelspend-shadow`, never for sensitive requests unless allowed, never delays the request. `modelspend shadow status|on|off|set`. See docs/shadow.md.
+- **Savings projection.** `modelspend savings`, `GET /v1/savings` and a dashboard **Savings** tab: per task type, spend now, the cheapest model that clears the evidence bar (the same bar and 95% Wilson
+  lower-bound logic routing uses, your thresholds respected), measured cost ratio and projected saving, and what is missing (more samples, below the bar). A projection, not a measurement.
+- **Routing can use it.** `modelspend shadow apply` (shows what would change; `--yes` to apply; `shadow revert`) lets routing treat shadow results as evidence only where you have no eval evidence of your own.
+  Answers from a model that qualified by shadow evidence are never used as a reference, so "close enough" steps cannot chain.
+- Server: `GET /v1/savings`, `GET/PUT /v1/shadow` (switch shadowing on or off without a restart). SDK: `ModelSpend.wait_for_shadow()`. `modelspend prune` also deletes shadow comparisons (and previously
+  would have kept them when there were no old requests).
+- Not yet verified against live providers (see docs/shadow.md).
+
 ## 0.6.0b2 - 2026-10-16
 
 - **Fix: reasoning models were scored as wrong when they ran out of output tokens.** Found with `eval calibrate --show-failures`: every `gpt-5-mini` failure was an empty answer (4,032 of its 4,156

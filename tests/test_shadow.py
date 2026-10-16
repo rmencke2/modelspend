@@ -453,3 +453,16 @@ async def test_no_shadowing_of_answers_from_a_model_that_qualified_by_shadow_evi
     await eng.run(r.model_copy(update={"pin": LARGE}))
     await eng.shadow.drain()
     assert len(rows(store)) > before  # a pinned (anchored) answer still is
+
+
+def test_the_sdk_can_wait_for_background_comparisons(catalog, cfg):
+    from modelspend import ModelSpend
+    cfg.shadow = ShadowSettings(enabled=True, sample_rate=1.0)
+    eng, ad = make_engine(catalog, cfg, {"openai": "positive"}, store=Store(":memory:"))
+    ms = ModelSpend(providers=["openai"], config=cfg, catalog=catalog, adapters=ad, store=eng.store)
+    ms.route("Classify this review: great", pin=LARGE, task_type="classification")
+    ms.wait_for_shadow()
+    assert len(rows(ms.store)) == 2
+    cfg.shadow = ShadowSettings()  # shadowing off: waiting is a harmless no-op
+    quiet, ad2 = make_engine(catalog, cfg, {"openai": "x"}, store=Store(":memory:"))
+    ModelSpend(providers=["openai"], config=cfg, catalog=catalog, adapters=ad2, store=quiet.store).wait_for_shadow()

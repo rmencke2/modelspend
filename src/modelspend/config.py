@@ -142,6 +142,16 @@ def parse_shadow(raw: object, env_enabled: str | None = None) -> ShadowSettings:
     return s.validate()
 
 
+def update_shadow_settings(home: Path, changes: dict) -> ShadowSettings:
+    """Merge changes into the "shadow" block of settings.json. Validated first: an invalid change writes nothing (ValueError)."""
+    settings = load_settings(home)
+    block = {**(settings.get("shadow") or {}), **changes}
+    new = parse_shadow(block)
+    settings["shadow"] = block
+    save_settings(home, settings)
+    return new
+
+
 def _strict_bool(v: object, name: str) -> bool:
     if isinstance(v, bool):
         return v

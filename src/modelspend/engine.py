@@ -117,7 +117,13 @@ class Engine:
         self.router = Router(catalog, config, available_providers=set(adapters),
                              latency_lookup=store.latency_p50 if store else None)
         self.shadow = None  # background comparison of cheaper models on real requests: off unless enabled in settings (see shadow.py)
-        if shadow and store is not None and config.shadow.enabled:
+        self._shadow_allowed = shadow  # evaluation and one-shot commands never shadow, whatever the settings say
+        self.set_shadow(config.shadow)
+
+    def set_shadow(self, settings: Any) -> None:
+        """Apply new shadow settings to a running engine (the dashboard's switch). Enabling creates the shadower; disabling only stops sampling."""
+        self.cfg.shadow = settings
+        if self._shadow_allowed and self.store is not None and settings.enabled and self.shadow is None:
             from .shadow import Shadow
             self.shadow = Shadow(self)
 

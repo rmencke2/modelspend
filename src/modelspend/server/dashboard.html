@@ -24,11 +24,11 @@ input.url{width:100%;min-width:260px;box-sizing:border-box}textarea{width:100%;m
 select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
 .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
 /* Costs tab: chart tokens (categorical slots 1-3 validated with the dataviz validator in light and dark) */
-#costs{--surface-1:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--base:#c3c2b7;--hair:rgba(11,11,11,.10);
+#costs,#savings{--surface-1:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--base:#c3c2b7;--hair:rgba(11,11,11,.10);
  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#cde2fb;--st-good:#0ca30c;--st-warn:#fab219;--st-crit:#d03b3b;--good-ink:#006300}
-@media (prefers-color-scheme:dark){#costs{--surface-1:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#2c2c2a;--base:#383835;--hair:rgba(255,255,255,.10);
+@media (prefers-color-scheme:dark){#costs,#savings{--surface-1:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#2c2c2a;--base:#383835;--hair:rgba(255,255,255,.10);
  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#0d366b;--good-ink:#0ca30c}}
-#costs.loading .chart,#costs.loading .tiles{opacity:.6}
+#costs.loading .chart,#costs.loading .tiles,#savings.loading .chart,#savings.loading .tiles{opacity:.6}
 .filters{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:4px 0 12px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
 .seg button{border:0;border-radius:0;background:transparent;padding:5px 12px}
@@ -49,6 +49,8 @@ select{padding:6px;border:1px solid var(--line);border-radius:6px;background:var
 #tip{position:fixed;z-index:9;pointer-events:none;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.18);max-width:280px}
 #tip .h{font-weight:600;margin-bottom:4px}#tip .r{display:flex;gap:8px;align-items:center;white-space:nowrap}#tip .k{display:inline-block;width:12px;height:3px;border-radius:2px}
 #tip .v{font-weight:600;margin-left:auto;padding-left:14px;font-variant-numeric:tabular-nums}#tip .l{color:var(--mut)}
+.st{white-space:nowrap}.st b{font-weight:600}.st-ready b{color:var(--good-ink,#067647)}.sv-need{color:var(--mut);font-size:12px}
+.hbar>b.seg-save{background:var(--s3)}.hbar>b.seg-keep{background:var(--s1)}
 .meter{height:10px;border-radius:5px;background:var(--track);overflow:hidden;margin:4px 0}.meter i{display:block;height:100%;border-radius:0 5px 5px 0;background:var(--s1)}
 .s-warning .meter i{background:var(--st-warn)}.s-over .meter i{background:var(--st-crit)}
 .badge{font-size:11px;border:1px solid var(--line);border-radius:10px;padding:1px 7px;color:var(--mut);margin-left:6px}
@@ -60,7 +62,7 @@ details.tv summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:8px
 <h1>ModelSpend</h1>
 <p class="note">Local usage. <b>Token counts are exactly what the providers reported</b>, summed over every attempt (retries, escalations, judge). Cost is computed from those tokens and catalog prices when a price is known (your invoice is authoritative), otherwise shown as "unknown". No prompts or responses are stored.</p>
 <p id="auth" hidden><input id="tok" type="password" placeholder="API token"> <button onclick="saveTok()">Use</button></p>
-<nav><a id="nav-usage" class="on" href="#usage">Usage</a><a id="nav-costs" href="#costs">Costs</a><a id="nav-pricing" href="#pricing">Pricing</a></nav>
+<nav><a id="nav-usage" class="on" href="#usage">Usage</a><a id="nav-costs" href="#costs">Costs</a><a id="nav-savings" href="#savings">Savings</a><a id="nav-pricing" href="#pricing">Pricing</a></nav>
 <section id="usage">
 <div class="tiles" id="tiles"></div>
 <h2>Tokens by provider</h2><div class="wrap"><table id="prov"></table></div>
@@ -92,6 +94,24 @@ details.tv summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:8px
 <label>Period<select id="b-period"><option>monthly</option><option>daily</option></select></label><label>USD limit<input id="b-usd" type="number" min="0" step="any" placeholder="optional"></label>
 <label>Token limit<input id="b-tokens" type="number" min="0" step="1" placeholder="optional"></label><label>Mode<select id="b-mode"><option>hard</option><option>soft</option></select></label>
 <button class="pri" id="b-add">Save budget</button></div><div class="msg" id="b-msg"></div></div>
+</section>
+<section id="savings" hidden>
+<p class="note">What each kind of work could cost on a <b>cheaper model</b>, judged from <b>your own requests</b>. A sample of them is also tried on cheaper models in the background (<b>shadow evaluation</b>, off until you turn it on) and compared with the answer you actually used. A model is only recommended when the same evidence bar routing uses is met. <b>This is a projection, not a measurement</b>: it assumes the sampled requests are typical, and "passed" means "as good as the answer you used", not "correct". Your provider's invoice is authoritative.</p>
+<div class="filters" role="group" aria-label="Filters"><span class="seg" id="s-win"><button data-w="7d">7 days</button><button data-w="30d">30 days</button><button data-w="all">All</button></span></div>
+<div class="hero" id="s-hero">$0<small>projected saving</small></div>
+<div class="tiles" id="s-tiles"></div>
+<h2>Spend now, and the projected saving where the evidence clears the bar</h2>
+<div class="chart"><div class="legend" aria-label="Legend"><span><i style="background:var(--s1)"></i>Would still cost</span><span><i style="background:var(--s3)"></i>Projected saving</span></div><div id="s-bars"></div></div>
+<h2>Evidence by task type</h2><div class="wrap"><table id="s-tbl"></table></div>
+<p class="note" id="s-notes"></p>
+<h2>Shadow evaluation</h2>
+<div class="card" id="s-shadow">
+<p class="note" id="s-sstate"></p>
+<div class="form"><label>Sample rate (%)<input id="s-rate" type="number" min="0" max="100" step="any"></label><label>Monthly cap (USD)<input id="s-cap" type="number" min="0" step="any"></label>
+<label style="flex-direction:row;align-items:center;gap:6px"><input id="s-on" type="checkbox" style="width:auto"> Compare cheaper models on my requests</label><button class="pri" id="s-save">Save</button></div>
+<div class="msg" id="s-msg"></div>
+<p class="note">Shadow calls cost real money, never exceed the monthly cap, and are recorded under project <code>modelspend-shadow</code>. Prompts are held in memory only; only verdicts and counts are stored. Requests marked sensitive are never shadowed unless you allow it. To let routing <i>use</i> the results, run <code>modelspend shadow apply</code> (it shows what would change first).</p>
+</div>
 </section>
 <div id="tip" role="tooltip" hidden></div>
 <section id="pricing" hidden>
@@ -128,10 +148,10 @@ async function load(){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(
  tbl('recent',[['Time','ts','',v=>new Date(v*1000).toLocaleTimeString()],['Task','task'],['Model','model'],['Status','status'],['Validation','validation'],
   ['Esc.','escalations','n'],['In','input_tokens','n',n0],['Cached','cache_read_tokens','n',n0],['Out','output_tokens','n',n0],['Reasoning','reasoning_tokens','n',n0],
   ['Cost','actual_cost','n',usd],['ms','latency_ms','n']],d.recent||[]);}
-load();setInterval(()=>{if(!$('usage').hidden)load();else if(!$('costs').hidden)loadCosts()},8000);
-const VIEWS=['usage','costs','pricing'];
+load();setInterval(()=>{if(!$('usage').hidden)load();else if(!$('costs').hidden)loadCosts();else if(!$('savings').hidden)loadSavings()},8000);
+const VIEWS=['usage','costs','savings','pricing'];
 function show(v){if(!VIEWS.includes(v))v='usage';VIEWS.forEach(x=>{$(x).hidden=x!==v;$('nav-'+x).className=x===v?'on':''});
- if(v==='pricing')loadPricing();else if(v==='costs')loadCosts();else load()}
+ if(v==='pricing')loadPricing();else if(v==='costs')loadCosts();else if(v==='savings')loadSavings();else load()}
 window.addEventListener('hashchange',()=>show(location.hash.slice(1)));
 function api(path,method='GET',body){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(e){}
  const h={'Content-Type':'application/json'};if(t)h.Authorization='Bearer '+t;
@@ -245,5 +265,44 @@ $('b-add').addEventListener('click',async()=>{const b=$('b-add');b.disabled=true
  const body={period:$('b-period').value,mode:$('b-mode').value};if($('b-project').value.trim())body.project=$('b-project').value.trim();if($('b-agent').value.trim())body.agent=$('b-agent').value.trim();
  if(num('b-usd')!=null)body.limit_usd=num('b-usd');if(num('b-tokens')!=null)body.limit_tokens=num('b-tokens');
  try{await api('/v1/budgets','PUT',body);say('b-msg','saved','ok');await loadCosts()}catch(err){say('b-msg',String(err.message),'warn')}finally{b.disabled=false}});
+// ---------------------------------------------------------------- Savings tab
+const SV={win:'30d'};
+const STATE={ready:['\u2713','Ready','st-ready'],collecting:['\u25D4','Collecting evidence',''],no_safe_cheaper_model:['\u2212','No safe cheaper model yet','']};
+const short=m=>String(m||'-').split('/').pop();
+function savingsBars(el,rows){el.textContent='';if(!rows.length){el.textContent='No calls recorded in this window.';el.className='note';return}el.className='';
+ const mx=Math.max(1e-12,...rows.map(r=>r.cost));
+ rows.forEach(r=>{const b=r.recommended,save=b?Math.min(b.projected_saving_usd,r.cost):0,keep=r.cost-save;
+  const row=document.createElement('div');row.className='hrow';const nm=document.createElement('div');nm.className='nm';nm.textContent=r.category;nm.title=r.category;
+  const track=document.createElement('div'),bar=document.createElement('div');bar.className='hbar';bar.style.width=Math.max(1,100*r.cost/mx)+'%';
+  const tot=document.createElement('div');tot.className='tt';tot.textContent=usd(r.cost);
+  const st=STATE[r.state];const tipRows=[{label:'Spend in window',value:usd(r.cost)},{label:'Top model',value:short(r.top_model)},{label:'State',value:st[1]}];
+  if(b)tipRows.push({label:'Cheaper model',value:short(b.model)},{label:'Projected saving',value:usd(save)+' ('+(r.cost?Math.round(100*save/r.cost):0)+'%)'});
+  [['seg-keep',keep,'Would still cost','var(--s1)'],['seg-save',save,'Projected saving','var(--s3)']].filter(p=>p[1]>0).forEach(p=>{const seg=document.createElement('b');seg.className=p[0];seg.style.flex=p[1]+' 1 0';
+   wire(seg,r.category,[{label:p[2],value:usd(p[1]),color:p[3]},...tipRows]);bar.appendChild(seg)});
+  track.appendChild(bar);row.append(nm,track,tot);el.appendChild(row)})}
+function savingsTable(el,rows){const head='<tr><th>Task</th><th class="n">Spend now</th><th>Top model</th><th>State</th><th>Best cheaper model</th><th class="n">Passed</th><th class="n">Lower bound</th><th class="n">Cost vs now</th><th class="n">Projected saving</th></tr>';
+ el.innerHTML=head+(rows.map(r=>{const b=r.recommended,p=b||r.candidates[0],st=STATE[r.state];
+  const need=!b&&p&&p.samples_needed?` <span class="sv-need">needs ${n0(p.samples_needed)} more</span>`:'';
+  return `<tr><td>${esc(r.category)}</td><td class="n">${esc(cost(r.cost,r.cost_complete))}</td><td>${esc(short(r.top_model))}</td>
+   <td class="st ${st[2]}"><span aria-hidden="true">${st[0]}</span> <b>${esc(st[1])}</b>${need}</td><td>${esc(p?short(p.model):'-')}</td>
+   <td class="n">${p?p.passes+'/'+p.n:'-'}</td><td class="n">${p&&p.lower_bound!=null?p.lower_bound.toFixed(2):'-'}</td>
+   <td class="n">${p&&p.cost_ratio!=null?((p.cost_ratio-1)*100>0?'+':'')+Math.round((p.cost_ratio-1)*100)+'%':'-'}</td>
+   <td class="n">${b?esc(usd(b.projected_saving_usd))+' ('+(r.cost?Math.round(100*b.projected_saving_usd/r.cost):0)+'%)':'-'}</td></tr>`}).join('')||'<tr><td>No data yet</td></tr>')}
+async function loadSavings(){const root=$('savings');root.classList.add('loading');
+ try{const [s,sh]=await Promise.all([api('/v1/savings?since='+SV.win),api('/v1/shadow')]);const T=s.totals,ready=T.categories_ready;
+  $('s-hero').innerHTML=esc(usd(T.projected_saving_usd))+'<small>'+(ready?'projected saving ('+Math.round(100*T.projected_saving_pct)+'% of spend), in '+ready+' of '+T.categories+' task types':'no task type has enough evidence yet')+'</small>';
+  $('s-tiles').innerHTML=[['Spend in window',usd(T.cost)],['Task types ready',ready+' of '+T.categories],['Shadow spend this month',usd(T.shadow_spend_this_month)+' of '+usd(T.shadow_budget)],
+   ['Scored comparisons',n0(sh.comparisons.reduce((a,c)=>a+c.n,0))]].map(x=>`<div class="tile"><b>${esc(x[1])}</b><span>${esc(x[0])}</span></div>`).join('');
+  savingsBars($('s-bars'),s.rows);savingsTable($('s-tbl'),s.rows);$('s-notes').textContent=s.notes.join(' ');
+  const S=sh.settings;$('s-sstate').textContent=(sh.active?'ON: ':'OFF: ')+Math.round(S.sample_rate*100)+'% of eligible requests sampled, up to '+S.max_candidates+' cheaper model(s) each, judge '+(S.judge?'on':'off')+
+   ', routing uses shadow evidence: '+(S.use_as_evidence?'yes':'no')+'.';
+  if(document.activeElement.id!=='s-rate'&&document.activeElement.id!=='s-cap'){$('s-rate').value=+(S.sample_rate*100).toFixed(2);$('s-cap').value=S.monthly_budget_usd;$('s-on').checked=S.enabled}
+ }catch(e){$('s-notes').textContent='Could not load savings ('+e.message+').'+(/not found/i.test(e.message)?' The server process is older than this page: run modelspend restart.':'')}
+ finally{root.classList.remove('loading')}}
+$('s-win').addEventListener('click',e=>{const b=e.target.closest('button[data-w]');if(!b)return;SV.win=b.dataset.w;syncSv();loadSavings()});
+function syncSv(){document.querySelectorAll('#s-win button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.w===SV.win)))}syncSv();
+$('s-save').addEventListener('click',async()=>{const b=$('s-save');b.disabled=true;
+ try{await api('/v1/shadow','PUT',{enabled:$('s-on').checked,sample_rate:Number($('s-rate').value)/100,monthly_budget_usd:Number($('s-cap').value)});say('s-msg','saved','ok');await loadSavings()}
+ catch(err){say('s-msg',String(err.message),'warn')}finally{b.disabled=false}});
 show(location.hash.slice(1));
 </script></main></body></html>

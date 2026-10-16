@@ -62,6 +62,11 @@ class ModelSpend:
     def route(self, messages: str | list[Any], **kw: Any) -> RouteResult:
         return _run(self.aroute(messages, **kw))
 
+    def wait_for_shadow(self, timeout: float = 60.0) -> None:
+        """Let background shadow comparisons finish. A short script that exits straight after route() would cancel them."""
+        if self.engine.shadow is not None:
+            _run(self.engine.shadow.drain(timeout))
+
     def preview(self, messages: str | list[Any], **kw: Any) -> Plan:
         return _run(self.apreview(messages, **kw))
 

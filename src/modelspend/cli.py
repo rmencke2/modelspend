@@ -498,17 +498,12 @@ def budget_remove(budget_id: int):
 
 
 def _write_shadow(cfg: Config, **changes) -> "ShadowSettings":
-    from .config import ShadowSettings, parse_shadow
-    settings = load_settings(cfg.home)
-    block = {**(settings.get("shadow") or {}), **changes}
+    from .config import update_shadow_settings
     try:
-        new = parse_shadow(block)  # validates before anything is written
+        return update_shadow_settings(cfg.home, changes)
     except ValueError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
-    settings["shadow"] = block
-    save_settings(cfg.home, settings)
-    return new
 
 
 def _shadow_summary(s) -> str:
