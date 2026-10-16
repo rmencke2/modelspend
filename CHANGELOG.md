@@ -7,6 +7,9 @@
   routing. Calibration and the baseline arms of `eval run` now retry a cut-off call once with 1,024 more output tokens, judge the retry, record both calls in the ledger, skip the retry if it would
   break `--budget`, and label anything still cut off as truncated. `eval calibrate` prints the number of retries; `eval run` reports `output_limit_retries`. Routed (non-eval) calls are unchanged; see
   docs/limitations.md.
+- **Fix: an ambiguous built-in calibration case.** `cal-extraction-2` asked for "every person named... in order of appearance" but expected only the three distinct people, so `gpt-4.1` and
+  `gpt-5-mini` answered `[Maria Chen, Dr. Okafor, Luis Prado, Maria, Luis]` (a fair reading) and failed. It now asks for each distinct person once, using the fullest name. The built-in dataset
+  is renamed `modelspend-calibration-v2` so evidence from the old wording is not mixed with the new.
 - **Fix: a reused ledger double counted the first call.** `run_single` recorded the whole ledger on every call, so a second call on the same ledger (the new retry) re-recorded the first call's attempts.
   Each call now records only its own attempts.
 

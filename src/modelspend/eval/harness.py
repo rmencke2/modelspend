@@ -363,7 +363,7 @@ def render_markdown(rep: dict[str, Any]) -> str:
 
 
 async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str], budget_usd: float | None = None,
-                    use_sandbox: bool = False, dataset: str = "modelspend-calibration-v1",
+                    use_sandbox: bool = False, dataset: str = "modelspend-calibration-v2",
                     failures: list[dict[str, Any]] | None = None,
                     stats: dict[str, int] | None = None) -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
     """Run every eligible model on every calibration task of each category; return measured evidence."""
