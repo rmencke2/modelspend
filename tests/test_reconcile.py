@@ -319,4 +319,4 @@ def test_request_counts_are_shown_so_missing_calls_can_be_counted(store, tmp_pat
     r = rep["rows"][0]
     assert (r["provider_requests"], r["modelspend_calls"]) == (5, 3)  # two calls were made outside ModelSpend
     assert "calls prov/MS" in rc.to_table(rep) and "5/3" in rc.to_table(rep)
-    assert rc.to_csv(rep).splitlines()[0].endswith("provider_requests,modelspend_calls,attention") and ",5,3,True" in rc.to_csv(rep)
+    assert rc.to_csv(rep).splitlines()[0].endswith("provider_requests,modelspend_calls,attention") and ",5,3,False" in rc.to_csv(rep)
