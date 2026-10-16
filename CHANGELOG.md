@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0b2 - unreleased
+## 0.6.0b2 - 2026-10-16
 
 - **Fix: reasoning models were scored as wrong when they ran out of output tokens.** Found with `eval calibrate --show-failures`: every `gpt-5-mini` failure was an empty answer (4,032 of its 4,156
   output tokens were reasoning, under a 400-token cap), so its 0/2 on analysis, rewriting and summarization measured the cap, not quality, and the stored evidence would have unfairly excluded it from
