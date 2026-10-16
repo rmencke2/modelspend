@@ -36,10 +36,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "input_tokens": ("input_tokens", "uncached_input_tokens", "prompt_tokens", "n_context_tokens_total"),
     "output_tokens": ("output_tokens", "completion_tokens", "generated_tokens", "n_generated_tokens_total"),
     "cache_read": ("cache_read_tokens", "cache_read_input_tokens", "input_cached_tokens", "cached_tokens", "cached_input_tokens"),
-    "cache_write": ("cache_write_tokens", "cache_creation_input_tokens", "cache_creation_tokens"),
+    "cache_write": ("cache_write_tokens", "cache_creation_input_tokens", "cache_creation_tokens", "input_cache_write_tokens"),
     "requests": ("requests", "num_model_requests", "n_requests", "request_count"),
     "cost": ("cost_usd", "cost", "amount_usd", "amount", "spend", "spend_usd", "total_cost"),
 }
+NO_USAGE = "(no usage)"  # placeholder row for a day the provider reports as empty: it still counts as covered
 _DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{8})$")
 
 
@@ -161,11 +162,13 @@ def parse_usage(text: str, provider: str | None, name: str = "file", mapping: di
             if p not in PROVIDERS:
                 raise ReconcileError(f"unknown provider {p!r}")
             model = str(r.get(c["model"]) or "").strip()
-            if not model or len(model) > 200:
-                raise ReconcileError("missing or oversized model name")
             row = {f: _num(r.get(c[f]), f != "cost") if c[f] else None
                    for f in ("input_tokens", "output_tokens", "cache_read", "cache_write", "requests", "cost")}
-            key = (p, canon_model(model), _day(r.get(c["day"])))
+            if not model and all(v is None for v in row.values()):
+                model = NO_USAGE  # a time bucket with no usage at all (providers write these for quiet days)
+            elif not model or len(model) > 200:
+                raise ReconcileError("missing or oversized model name")
+            key = (p, canon_model(model) if model != NO_USAGE else model, _day(r.get(c["day"])))
         except ReconcileError as e:
             raise ReconcileError(f"row {n}: {e}") from None
         a = agg.setdefault(key, {"provider": key[0], "model": key[1], "day": key[2], "input_tokens": 0, "output_tokens": 0,
@@ -207,8 +210,9 @@ def import_file(store: Store, path: Path, provider: str | None, source: str | No
               r["requests"], r["cost"], ts) for r in rows])
         store.db.commit()
     days = sorted({r["day"] for r in rows})
-    return {"source": src, "rows": len(rows), "providers": sorted({r["provider"] for r in rows}), "first_day": days[0], "last_day": days[-1],
-            "models": len({(r["provider"], r["model"]) for r in rows}), "has_cost": any(r["cost"] is not None for r in rows),
+    empty = sorted({r["day"] for r in rows if r["model"] == NO_USAGE})
+    return {"source": src, "rows": len(rows) - len(empty), "empty_days": empty, "providers": sorted({r["provider"] for r in rows}), "first_day": days[0], "last_day": days[-1],
+            "models": len({(r["provider"], r["model"]) for r in rows if r["model"] != NO_USAGE}), "has_cost": any(r["cost"] is not None for r in rows),
             "overlap": [{"provider": p, "day": d} for p, d in overlap]}
 
 
@@ -276,6 +280,8 @@ def compare(store: Store, *, by_day: bool = False, tolerance: float = 0.02, excl
 
     prov: dict[tuple, dict[str, Any]] = {}
     for r in imported:
+        if r["model"] == NO_USAGE:
+            continue  # only widens the covered days
         k = key(r["provider"], r["model"], r["day"])
         a = prov.setdefault(k, {"input": 0, "output": 0, "cost": None, "requests": 0})
         side = r["input_tokens"] + (r["cache_write"] + r["cache_read"] if not incl[r["provider"]] else 0)

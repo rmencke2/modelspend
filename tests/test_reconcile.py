@@ -246,3 +246,47 @@ def test_cli_import_run_check_and_remove(tmp_path, monkeypatch):
     assert runner.invoke(app, ["reconcile", "remove", "nope"]).exit_code == 2
     assert runner.invoke(app, ["reconcile", "remove", "export.csv"]).exit_code == 0
     assert runner.invoke(app, ["reconcile", "run"]).exit_code == 2
+
+
+# ---- real OpenAI completions-usage export layout (2026-10-16, IDs anonymized): blank buckets for quiet days, float-formatted numbers ----
+OPENAI_EXPORT = (
+    "start_time,end_time,start_time_iso,end_time_iso,project_id,num_model_requests,user_id,api_key_id,model,batch,service_tier,input_tokens,"
+    "output_tokens,input_cached_tokens,input_cache_write_tokens,input_cache_write_12h_tokens,input_uncached_tokens,input_text_tokens,"
+    "output_text_tokens,input_cached_text_tokens,input_audio_tokens,input_cached_audio_tokens,output_audio_tokens,input_image_tokens,"
+    "input_cached_image_tokens,output_image_tokens,api_source\n"
+    "1791763200,1791849600,2026-10-12T00:00:00+00:00,2026-10-13T00:00:00+00:00,proj_x,1.0,user-x,key_x,gpt-5-mini-2025-08-07,False,default,37.0,164.0,0.0,0.0,0.0,37.0,37.0,164.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n"
+    "1791763200,1791849600,2026-10-12T00:00:00+00:00,2026-10-13T00:00:00+00:00,proj_x,3.0,user-x,key_x,gpt-4.1-nano-2025-04-14,False,default,66.0,45.0,0.0,0.0,0.0,66.0,66.0,45.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n"
+    "1791849600,1791936000,2026-10-13T00:00:00+00:00,2026-10-14T00:00:00+00:00,,,,,,,,,,,,,,,,,,,,,,,\n"
+    "1791936000,1792022400,2026-10-14T00:00:00+00:00,2026-10-15T00:00:00+00:00,proj_x,6.0,user-x,key_x,gpt-4.1-nano-2025-04-14,False,default,96.0,85.0,0.0,0.0,0.0,96.0,96.0,85.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,\n"
+    "1792108800,1792195200,2026-10-16T00:00:00+00:00,2026-10-17T00:00:00+00:00,,,,,,,,,,,,,,,,,,,,,,,\n")
+
+
+def test_real_openai_export_layout_imports_with_empty_days_kept(store, tmp_path):
+    r = imp(store, tmp_path, OPENAI_EXPORT)
+    assert (r["rows"], r["models"], r["first_day"], r["last_day"], r["has_cost"]) == (3, 2, "2026-10-12", "2026-10-16", False)
+    assert r["empty_days"] == ["2026-10-13", "2026-10-16"]
+    got = {(x["day"], x["model"]): (x["input_tokens"], x["output_tokens"], x["requests"]) for x in rc.parse_usage(OPENAI_EXPORT, "openai")}
+    assert got[("2026-10-12", "gpt-5-mini")] == (37, 164, 1) and got[("2026-10-14", "gpt-4.1-nano")] == (96, 85, 6)
+
+
+def test_a_modelspend_call_on_a_day_the_provider_reports_empty_is_flagged(store, tmp_path):
+    imp(store, tmp_path, OPENAI_EXPORT)
+    add(store, "openai", "gpt-4.1-nano", "2026-10-12", i=66, o=45)
+    add(store, "openai", "gpt-5-mini", "2026-10-12", i=37, o=164)
+    add(store, "openai", "gpt-4.1-nano", "2026-10-14", i=96, o=85)
+    ok = rc.compare(store)
+    assert ok["summary"]["ok"] and all(r["model"] != rc.NO_USAGE for r in ok["rows"])
+    assert {r["model"]: r["provider_tokens"] for r in ok["rows"]} == {"gpt-4.1-nano": 292, "gpt-5-mini": 201}
+    add(store, "openai", "gpt-4.1-nano", "2026-10-13", i=500, o=100)  # provider says nothing happened that day
+    add(store, "openai", "gpt-4.1-nano", "2026-10-16", i=500, o=100)  # the last (empty) day is covered too
+    bad = rc.compare(store)
+    assert not bad["summary"]["ok"] and bad["rows"][0]["tokens"]["status"] == "modelspend_higher"
+    days = {r["day"]: r["tokens"]["status"] for r in rc.compare(store, by_day=True)["rows"] if r["model"] == "gpt-4.1-nano"}
+    assert days["2026-10-13"] == days["2026-10-16"] == "modelspend_only"
+
+
+def test_a_row_with_numbers_but_no_model_is_still_an_error():
+    with pytest.raises(rc.ReconcileError, match="row 1: missing or oversized model"):
+        rc.parse_usage("date,model,input_tokens\n2026-10-10,,5\n", "openai")
+    with pytest.raises(rc.ReconcileError, match="row 1: cannot read a date"):
+        rc.parse_usage("date,model,input_tokens\n,,\n", "openai")  # a blank row without even a day is not a bucket

@@ -515,6 +515,8 @@ def reconcile_import(file: Path = typer.Argument(..., help="Usage export from th
         raise typer.Exit(2)
     typer.echo(f"imported {r['rows']} rows as '{r['source']}': {', '.join(r['providers'])}, {r['models']} model(s), {r['first_day']}..{r['last_day']}"
                + ("" if r["has_cost"] else "  (no cost column: only tokens can be compared)"))
+    if r["empty_days"]:
+        typer.echo(f"note: the provider reports no usage on {', '.join(r['empty_days'])}; ModelSpend calls on those days will be flagged.")
     if r["overlap"]:
         days = ", ".join(f"{o['provider']} {o['day']}" for o in r["overlap"][:5])
         typer.echo(f"warning: another import already covers some of these days ({days}{'...' if len(r['overlap']) > 5 else ''}); "
