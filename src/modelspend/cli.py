@@ -196,7 +196,7 @@ def route(prompt: Optional[str] = typer.Argument(None, help="Prompt text, or '-'
           as_json: bool = typer.Option(False, "--json")):
     """Route a task to a model and run it (spends money with your API keys)."""
     cfg = Config.from_env()
-    eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
+    eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path), shadow=False)  # type: ignore[arg-type]
     try:
         res = asyncio.run(eng.run(_request(prompt, providers, profile, budget, max_output_tokens, task_type, schema, system, hard, cfg, budget_tokens, allow_unpriced,
                                                  project, agent, run_id, label, model)))
@@ -861,7 +861,7 @@ def eval_run(mode: str = typer.Option("mock", help="mock (simulated, free) or li
         if not budget or budget <= 0:
             typer.echo("live evaluation spends real money: pass --budget <USD> (hard ceiling).", err=True)
             raise typer.Exit(2)
-        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval
+        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path), shadow=False)  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval; evals never shadow
         missing = [p for p in provs if p not in eng.adapters]
         if missing:
             typer.echo(f"no API key for: {', '.join(missing)}", err=True)
@@ -961,7 +961,7 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
         if not budget or budget <= 0:
             typer.echo("live calibration spends real money: pass --budget <USD>.", err=True)
             raise typer.Exit(2)
-        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval
+        eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path), shadow=False)  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval; evals never shadow
     ds = dataset or (fixtures.stem if fixtures is not None and fixtures.is_file() else fixtures.name if fixtures is not None else "modelspend-calibration-v2")
     fails: list[dict] = []
     stats: dict[str, int] = {}
@@ -1249,7 +1249,7 @@ EXIT_PENDING = 10  # `pricing refresh` exit code: at least one proposal is waiti
 
 
 def _pricing_engine(cfg: Config, catalog: Optional[str]) -> Engine:
-    return Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]
+    return Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path), shadow=False)  # type: ignore[arg-type]
 
 
 def _print_result(r: dict) -> None:

@@ -94,6 +94,60 @@ def _bool(v: str | None, default: bool = False) -> bool:
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
 
+@dataclass
+class ShadowSettings:
+    """Shadow evaluation (see shadow.py): off by default, opt-in, capped. Lives under "shadow" in settings.json."""
+    enabled: bool = False
+    sample_rate: float = 0.05  # fraction of eligible requests that are also tried on cheaper models in the background
+    monthly_budget_usd: float = 5.0  # hard ceiling on shadow spend per UTC month (this process; see docs/shadow.md)
+    max_candidates: int = 2  # cheaper models tried per sampled request
+    judge: bool = True  # when there are no validators and the answers differ, ask a model whether they are equivalent (costs money)
+    include_sensitive: bool = False  # requests marked sensitive are never shadowed unless this is true
+    use_as_evidence: bool = False  # let routing use shadow results as evidence where you have no eval evidence (`modelspend shadow apply`)
+    target_n: int = 100  # stop sampling a (model, task) pair once it has this many scored comparisons
+
+    def validate(self) -> "ShadowSettings":
+        if not 0 <= self.sample_rate <= 1:
+            raise ValueError("shadow.sample_rate must be between 0 and 1 (0.05 = 5% of requests)")
+        if self.monthly_budget_usd < 0:
+            raise ValueError("shadow.monthly_budget_usd must be zero or more")
+        if not 1 <= self.max_candidates <= 5:
+            raise ValueError("shadow.max_candidates must be between 1 and 5")
+        if not 10 <= self.target_n <= 10000:
+            raise ValueError("shadow.target_n must be between 10 and 10000")
+        return self
+
+
+_SHADOW_KEYS = {f for f in ShadowSettings.__dataclass_fields__}
+
+
+def parse_shadow(raw: object, env_enabled: str | None = None) -> ShadowSettings:
+    """settings.json "shadow" block (+ MODELSPEND_SHADOW=true|false). Unknown or mistyped keys raise: a typo in a spending limit must not be ignored."""
+    if raw is not None and not isinstance(raw, dict):
+        raise ValueError("settings.json: 'shadow' must be an object")
+    raw = dict(raw or {})
+    unknown = sorted(set(raw) - _SHADOW_KEYS)
+    if unknown:
+        raise ValueError(f"settings.json: unknown shadow setting(s) {', '.join(unknown)}; valid: {', '.join(sorted(_SHADOW_KEYS))}")
+    try:
+        s = ShadowSettings(
+            enabled=_strict_bool(raw.get("enabled", False), "enabled"), sample_rate=float(raw.get("sample_rate", 0.05)),
+            monthly_budget_usd=float(raw.get("monthly_budget_usd", 5.0)), max_candidates=int(raw.get("max_candidates", 2)),
+            judge=_strict_bool(raw.get("judge", True), "judge"), include_sensitive=_strict_bool(raw.get("include_sensitive", False), "include_sensitive"),
+            use_as_evidence=_strict_bool(raw.get("use_as_evidence", False), "use_as_evidence"), target_n=int(raw.get("target_n", 100)))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"settings.json: bad shadow setting ({e})") from None
+    if env_enabled is not None and env_enabled.strip():
+        s.enabled = _bool(env_enabled)
+    return s.validate()
+
+
+def _strict_bool(v: object, name: str) -> bool:
+    if isinstance(v, bool):
+        return v
+    raise ValueError(f"shadow.{name} must be true or false")
+
+
 def _load_thresholds(settings: dict) -> dict:
     """Parse the user's evidence bars. A typo in a quality bar must not be silently ignored, so errors are raised."""
     from .policy import parse_thresholds
@@ -121,6 +175,7 @@ class Config:
     allow_unpriced: bool = False  # run models without catalog pricing (cost reported as unknown)
     aliases: dict[str, str] = field(default_factory=dict)  # name -> 'provider/model-id' (see aliases.py); a pinned, unrouted model
     thresholds: dict = field(default_factory=dict)  # user-defined evidence bars per task category (see policy.Threshold); from settings.json
+    shadow: ShadowSettings = field(default_factory=ShadowSettings)  # background comparison of cheaper models on real requests (shadow.py)
     sticky: bool = True  # keep the model chosen for earlier turns of a conversation (MODELSPEND_STICKY=false to turn off)
     default_project: str | None = None  # attribution defaults (MODELSPEND_PROJECT / MODELSPEND_AGENT)
     default_agent: str | None = None
@@ -185,6 +240,7 @@ class Config:
             key_sources=key_sources,
             aliases={str(k): str(v) for k, v in (settings.get("aliases") or {}).items()},
             thresholds=_load_thresholds(settings),
+            shadow=parse_shadow(settings.get("shadow"), e.get("MODELSPEND_SHADOW")),
             sticky=_bool(e.get("MODELSPEND_STICKY"), bool(settings.get("sticky_conversations", True))),
             allow_models=list(settings.get("allow_models", [])),
             deny_models=list(settings.get("deny_models", [])),

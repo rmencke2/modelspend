@@ -34,6 +34,12 @@ create table if not exists conversations(key text primary key, model text, categ
 create table if not exists provider_usage(
   source text, provider text, model text, day text, input_tokens int, output_tokens int, cache_read int, cache_write int,
   requests int, cost real, imported_ts real, primary key(source, provider, model, day));
+create table if not exists shadow_results(
+  id integer primary key autoincrement, ts real, request_id text, project text, agent text, category text,
+  used_provider text, used_model text, cand_provider text, cand_model text,
+  method text, verdict text, reason text,
+  used_cost real, cand_cost real, judge_cost real, cand_input int, cand_output int);
+create index if not exists shadow_cat on shadow_results(category, cand_provider, cand_model);
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
@@ -154,6 +160,14 @@ class Store:
                  a.estimated_cost_usd, a.cost_usd, a.cost_basis, a.latency_ms))
         self.db.commit()
 
+    def record_shadow(self, **r: Any) -> None:
+        """One shadow comparison. Only a verdict, a fixed reason code, costs and token counts: never prompts or answers."""
+        cols = ("request_id", "project", "agent", "category", "used_provider", "used_model", "cand_provider", "cand_model", "method", "verdict",
+                "reason", "used_cost", "cand_cost", "judge_cost", "cand_input", "cand_output")
+        with self.lock:
+            self.db.execute(f"insert into shadow_results(ts, {', '.join(cols)}) values (?{', ?' * len(cols)})", (time.time(), *(r.get(c) for c in cols)))
+            self.db.commit()
+
     def prune(self, older_than_ts: float, dry_run: bool = False) -> dict[str, int]:
         """Delete requests (and their attempts) recorded before the given time. Budgets and the classifier cache are untouched."""
         with self.lock:
@@ -162,6 +176,7 @@ class Store:
             if not dry_run and n:
                 self.db.execute("delete from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,))
                 self.db.execute("delete from requests where ts < ?", (older_than_ts,))
+                self.db.execute("delete from shadow_results where ts < ?", (older_than_ts,))
                 self.db.commit()
         return {"requests": n, "attempts": a}
 

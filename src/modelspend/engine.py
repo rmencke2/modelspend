@@ -106,6 +106,7 @@ class Engine:
         store: Store | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         sandbox_runner: Callable[[str, dict], tuple[bool, str]] | None | str = "auto",
+        shadow: bool = True,
     ):
         self.catalog = catalog
         self.cfg = config
@@ -115,6 +116,10 @@ class Engine:
         self.sandbox_runner = make_runner() if sandbox_runner == "auto" else sandbox_runner
         self.router = Router(catalog, config, available_providers=set(adapters),
                              latency_lookup=store.latency_p50 if store else None)
+        self.shadow = None  # background comparison of cheaper models on real requests: off unless enabled in settings (see shadow.py)
+        if shadow and store is not None and config.shadow.enabled:
+            from .shadow import Shadow
+            self.shadow = Shadow(self)
 
     def set_catalog(self, catalog: Catalog) -> None:
         """Use a freshly loaded catalog (e.g. after prices were updated) without restarting."""
@@ -420,6 +425,8 @@ class Engine:
         result = self._result(req, plan, ledger, counters, cand, resp, report, status, first_estimate, notes, t0)
         if self.store:
             self.store.record(result)
+        if self.shadow is not None:
+            self.shadow.maybe(req, plan, cand, resp, report, status)
         return result
 
     def _result(self, req, plan: Plan, ledger: Ledger, counters: dict, cand: Candidate, resp: ProviderResponse,
@@ -465,7 +472,7 @@ class Engine:
                                       plan.policy_version, int((time.monotonic() - t0) * 1000),
                                       tags=_tags(req))
 
-    async def run_single(self, req: RouteRequest, cand: Candidate, ledger: Ledger) -> tuple[ProviderResponse | None, int]:
+    async def run_single(self, req: RouteRequest, cand: Candidate, ledger: Ledger, task: str = "eval") -> tuple[ProviderResponse | None, int]:
         """One model, no validation, no escalation (bounded operational retries only).
 
         Used by the evaluation harness for the baselines. Raises ProviderError on operational failure;
@@ -479,11 +486,12 @@ class Engine:
             status = "provider_error"
             raise
         finally:
-            self._record_single(req, cand, ledger.attempts[start:], status, int((time.monotonic() - t0) * 1000))
+            self._record_single(req, cand, ledger.attempts[start:], status, int((time.monotonic() - t0) * 1000), task)
         return resp, int((time.monotonic() - t0) * 1000)
 
-    def _record_single(self, req: RouteRequest, cand: Candidate, attempts: list[AttemptRecord], status: str, latency_ms: int) -> None:
-        """Eval baselines and calibration calls spend real money: they belong in the usage ledger like any other call."""
+    def _record_single(self, req: RouteRequest, cand: Candidate, attempts: list[AttemptRecord], status: str, latency_ms: int,
+                       task: str = "eval") -> None:
+        """Eval baselines, calibration and shadow calls spend real money: they belong in the usage ledger like any other call."""
         if not self.store or not attempts:
             return
         total = Usage()
@@ -493,7 +501,7 @@ class Engine:
         uncertain = sum(a.cost_usd or 0.0 for a in attempts if a.cost_basis == "uncertain_upper_estimate")
         complete = not any(a.cost_basis == "unpriced" and a.outcome != "skipped_budget" for a in attempts)
         self.store.record_row(
-            uuid.uuid4().hex[:12], req.profile.value, "eval", "n/a", cand.provider, cand.model, status, "n/a", 0, 0, 0,
+            uuid.uuid4().hex[:12], req.profile.value, task, "n/a", cand.provider, cand.model, status, "n/a", 0, 0, 0,
             cand.expected_cost_usd, spent if complete else None, uncertain, req.max_budget_usd,
             total.input_tokens + total.cache_read_tokens + total.cache_write_tokens, total.output_tokens, latency_ms, "", "",
             attempts, cache_read=total.cache_read_tokens, reasoning=total.reasoning_tokens,
