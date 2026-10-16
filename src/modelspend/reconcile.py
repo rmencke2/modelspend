@@ -364,11 +364,13 @@ def _d(v: float | None, money: bool = False) -> str:
 
 
 def to_table(rep: dict[str, Any]) -> str:
-    head = ["provider", "model"] + (["day"] if rep["by_day"] else []) + ["provider tok", "ModelSpend tok", "diff", "tokens", "provider $", "ModelSpend $", "diff $", "cost"]
+    head = ["provider", "model"] + (["day"] if rep["by_day"] else []) + ["provider tok", "ModelSpend tok", "diff", "tokens", "calls prov/MS",
+                                                                     "provider $", "ModelSpend $", "diff $", "cost"]
     rows = [head]
     for r in rep["rows"]:
         rows.append([r["provider"], r["model"]] + ([r["day"]] if rep["by_day"] else []) +
                     [_n(r["provider_tokens"]), _n(r["modelspend_tokens"]), _d(r["tokens"]["diff"]), r["tokens"]["status"] + ("  <-- check" if r["attention"] else ""),
+                     f"{_n(r['provider_requests'])}/{_n(r['modelspend_calls'])}",
                      _c(r["provider_cost"]), _c(r["modelspend_cost"]), _d(r["cost"]["diff"], True), r["cost"]["status"]])
     left = 2 + (1 if rep["by_day"] else 0)
     widths = [max(len(x[i]) for x in rows) for i in range(len(head))]
@@ -401,8 +403,8 @@ def to_csv(rep: dict[str, Any]) -> str:
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
     cols = ["provider", "model"] + (["day"] if rep["by_day"] else [])
-    w.writerow(cols + ["provider_tokens", "modelspend_tokens", "token_diff", "token_status", "provider_cost", "modelspend_cost", "cost_diff", "cost_status", "attention"])
+    w.writerow(cols + ["provider_tokens", "modelspend_tokens", "token_diff", "token_status", "provider_cost", "modelspend_cost", "cost_diff", "cost_status", "provider_requests", "modelspend_calls", "attention"])
     for r in rep["rows"]:
         w.writerow([_csv_safe(r[c]) for c in cols] + [r["provider_tokens"], r["modelspend_tokens"], r["tokens"]["diff"], r["tokens"]["status"],
-                                                       r["provider_cost"], r["modelspend_cost"], r["cost"]["diff"], r["cost"]["status"], r["attention"]])
+                                                       r["provider_cost"], r["modelspend_cost"], r["cost"]["diff"], r["cost"]["status"], r["provider_requests"], r["modelspend_calls"], r["attention"]])
     return out.getvalue()

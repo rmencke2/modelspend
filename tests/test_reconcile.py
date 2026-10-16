@@ -309,3 +309,14 @@ def test_zero_token_modelspend_rows_are_not_flagged_and_the_summary_explains_pro
     add(clean, "openai", "gpt-4.1-nano", "2026-10-10", i=1000, o=500, cost=0.0006)
     add(clean, "openai", "gpt-4.1-nano", "2026-10-11", i=2000, o=1000, cost=0.0012)
     assert "Result: 1 of 1 rows match within 2%; nothing needs a look.\n" in rc.to_table(rc.compare(clean))
+
+
+def test_request_counts_are_shown_so_missing_calls_can_be_counted(store, tmp_path):
+    imp(store, tmp_path, "date,model,input_tokens,output_tokens,num_model_requests\n2026-10-10,gpt-4.1-nano,3000,1000,5\n")
+    for _ in range(3):
+        add(store, "openai", "gpt-4.1-nano", "2026-10-10", i=500, o=100)
+    rep = rc.compare(store)
+    r = rep["rows"][0]
+    assert (r["provider_requests"], r["modelspend_calls"]) == (5, 3)  # two calls were made outside ModelSpend
+    assert "calls prov/MS" in rc.to_table(rep) and "5/3" in rc.to_table(rep)
+    assert rc.to_csv(rep).splitlines()[0].endswith("provider_requests,modelspend_calls,attention") and ",5,3,True" in rc.to_csv(rep)
