@@ -6,7 +6,8 @@
   and `modelspend reconcile run` compares tokens and cost per model with ModelSpend's own records over the days the export covers (`--by-day`, `--tolerance`, `--exclusive`,
   `--check` for a non-zero exit, `--format table|csv|json`). It flags ModelSpend recording *more* than the provider billed; provider-higher is normal unless the key is exclusive.
   Cached-token semantics are per provider and overridable; model snapshot suffixes are merged; re-importing a source replaces it and overlapping imports warn. The file formats are
-  based on documentation, not yet checked against real exports. See docs/reconcile.md.
+  based on documentation; the OpenAI completions-usage CSV export was checked against a real file (tokens only: it has no cost column), the others are not. Days with no usage (blank
+  rows in the export) are kept as covered days, so ModelSpend calls on a day the provider reports empty are flagged. See docs/reconcile.md.
 - **Fix: first use from two processes on one database could crash after the provider call.** `Store.salt()` selected then inserted, so two processes both seeing "no salt yet" made the
   second fail with `UNIQUE constraint failed: meta.k` (surfaced as a flaky concurrent-budget test, about 1 run in 6). It now keeps whichever salt won. Regression test included.
 

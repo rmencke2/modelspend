@@ -52,7 +52,16 @@ If your export uses other names, map them: `--map day=Date --map model=Snapshot 
 
 Importing the same `--source` name again **replaces** that import. Two *different* imports that cover the same days are added together by `reconcile run`, which double counts; the import warns when that happens, and you can compare one at a time with `--source` or delete one with `reconcile remove`.
 
+## Quiet days
+
+Providers write an empty row for a day with no usage (OpenAI's export does: only the time columns are filled in). ModelSpend keeps that as "the provider reports nothing this day", so the day counts as covered and any ModelSpend call on it is flagged. The last day in an export is often today, and the provider's numbers for today lag, so a flag on the final day can simply mean the data has not arrived yet.
+
+## Verified against a real export
+
+The OpenAI **completions usage CSV export** (Usage page; columns such as `start_time`, `num_model_requests`, `model`, `input_tokens`, `input_cached_tokens`, `output_tokens`) imported correctly on 2026-10-16, including its blank quiet-day rows and float-formatted numbers. That export has **no cost column**, so only tokens are compared. The cost handling is tested but not checked against a real provider cost export.
+
 ## Not verified yet
 
-- The column names and JSON shapes above are based on the providers' documentation and common export layouts. They have **not been checked against real exports**; if a real file does not import, `--map` covers most differences and a report of the file's header row helps us add it.
+- Whether OpenAI's `input_tokens` already includes `input_cached_tokens` is assumed (the default for OpenAI) and was not exercised: the sample export had no cached tokens.
+- The other column names and JSON shapes above are based on the providers' documentation and common export layouts. They have **not been checked against real exports** (Anthropic, Google, xAI, any cost export); if a real file does not import, `--map` covers most differences and a report of the file's header row helps us add it.
 - Fetching usage directly from the providers' admin usage APIs is not built. It would need an admin-level key, which is a larger permission than the inference keys ModelSpend holds today, so it is a separate, opt-in step.
