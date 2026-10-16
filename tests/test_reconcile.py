@@ -320,3 +320,15 @@ def test_request_counts_are_shown_so_missing_calls_can_be_counted(store, tmp_pat
     assert (r["provider_requests"], r["modelspend_calls"]) == (5, 3)  # two calls were made outside ModelSpend
     assert "calls prov/MS" in rc.to_table(rep) and "5/3" in rc.to_table(rep)
     assert rc.to_csv(rep).splitlines()[0].endswith("provider_requests,modelspend_calls,attention") and ",5,3,False" in rc.to_csv(rep)
+
+
+def test_calls_that_never_reached_the_provider_are_not_counted_as_requests(store, tmp_path):
+    imp(store, tmp_path, "date,model,input_tokens,output_tokens,num_model_requests\n2026-10-10,gpt-4.1-nano,1000,200,2\n")
+    add(store, "openai", "gpt-4.1-nano", "2026-10-10", i=500, o=100)
+    add(store, "openai", "gpt-4.1-nano", "2026-10-10", i=500, o=100)
+    for _ in range(3):  # a bad-key test: three attempts rejected before any billing
+        add(store, "openai", "gpt-4.1-nano", "2026-10-10", outcome="operational_error")
+    store.db.execute("update attempts set cost_basis = 'uncertain_upper_estimate' where request_id = (select request_id from attempts order by rowid limit 1 offset 4)")
+    store.db.commit()  # one failed call that MAY have been billed (a timeout) does count
+    r = rc.compare(store)["rows"][0]
+    assert (r["provider_requests"], r["modelspend_calls"]) == (2, 3)

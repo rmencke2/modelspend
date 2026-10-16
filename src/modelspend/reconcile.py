@@ -298,7 +298,7 @@ def compare(store: Store, *, by_day: bool = False, tolerance: float = 0.02, excl
     for p, (lo, hi) in span.items():
         start = datetime.fromisoformat(lo).replace(tzinfo=timezone.utc).timestamp()
         end = (datetime.fromisoformat(hi).replace(tzinfo=timezone.utc) + timedelta(days=1)).timestamp()
-        q = ("select a.model, strftime('%Y-%m-%d', r.ts, 'unixepoch') day, a.input_tokens i, a.cache_read cr, a.cache_write cw, a.output_tokens o, a.cost c "
+        q = ("select a.model, strftime('%Y-%m-%d', r.ts, 'unixepoch') day, a.input_tokens i, a.cache_read cr, a.cache_write cw, a.output_tokens o, a.cost c, a.outcome oc, a.cost_basis cb "
              "from attempts a join requests r on r.id = a.request_id "
              "where a.provider = ? and a.outcome != 'skipped_budget' and r.ts >= ? and r.ts < ?")
         for r in store.db.execute(q, (p, start, end)):
@@ -306,7 +306,8 @@ def compare(store: Store, *, by_day: bool = False, tolerance: float = 0.02, excl
             a = ms.setdefault(k, {"input": 0, "output": 0, "cost": 0.0, "unpriced": 0, "calls": 0})
             a["input"] += (r["i"] or 0) + (r["cr"] or 0) + (r["cw"] or 0)
             a["output"] += r["o"] or 0
-            a["calls"] += 1
+            if r["oc"] in ("ok", "refused") or r["cb"] == "uncertain_upper_estimate":  # failed calls that never reached the provider's meter are not requests
+                a["calls"] += 1
             if r["c"] is None:
                 a["unpriced"] += 1
             else:

@@ -29,7 +29,7 @@ Nothing is fetched from the provider and no extra key is needed: you export the 
 
 ## Request counts
 
-The table's `calls prov/MS` column compares the provider's request count with the number of calls ModelSpend recorded (every attempt counts: retries, failovers, escalations, classifier and judge calls, all calls a provider bills as a request). Counts are whole numbers, so they show *how many* calls are missing even when token differences are ambiguous: if the provider is 16 calls above ModelSpend and you know you ran 16 calls outside ModelSpend, the gap is explained. Failed calls that never reached the provider's metering appear on the ModelSpend side only.
+The table's `calls prov/MS` column compares the provider's request count with the number of calls ModelSpend recorded that reached the provider: answered calls (retries, failovers, escalations, classifier and judge calls included) and failed calls that may have been billed (timeouts, server errors). Calls that failed before reaching the provider's meter (a bad key, a refused budget) are not counted: the provider never saw them. Counts are whole numbers, so they show *how many* calls are missing even when token differences are ambiguous: if the provider is 16 calls above ModelSpend and you know you ran 16 calls outside ModelSpend, the gap is explained. 
 
 ## Cached tokens
 
