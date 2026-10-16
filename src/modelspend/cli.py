@@ -37,6 +37,8 @@ alias_app = typer.Typer(no_args_is_help=True, help="Name the model you want for 
 app.add_typer(alias_app, name="alias")
 budget_app = typer.Typer(no_args_is_help=True, help="Spending limits per project and/or agent (daily or monthly, in USD and/or tokens).")
 app.add_typer(budget_app, name="budget")
+shadow_app = typer.Typer(no_args_is_help=True, help="Learn from your own traffic which cheaper model is safe to use (opt-in, capped, off by default).")
+app.add_typer(shadow_app, name="shadow")
 reconcile_app = typer.Typer(no_args_is_help=True, help="Compare ModelSpend's usage with what the provider reports (import an export you download yourself).")
 app.add_typer(reconcile_app, name="reconcile")
 app.add_typer(catalog_app, name="catalog")
@@ -493,6 +495,129 @@ def budget_remove(budget_id: int):
         typer.echo(f"no budget #{budget_id}", err=True)
         raise typer.Exit(2)
     typer.echo(f"removed budget #{budget_id}")
+
+
+def _write_shadow(cfg: Config, **changes) -> "ShadowSettings":
+    from .config import ShadowSettings, parse_shadow
+    settings = load_settings(cfg.home)
+    block = {**(settings.get("shadow") or {}), **changes}
+    try:
+        new = parse_shadow(block)  # validates before anything is written
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    settings["shadow"] = block
+    save_settings(cfg.home, settings)
+    return new
+
+
+def _shadow_summary(s) -> str:
+    return (f"{'ON' if s.enabled else 'OFF'}: {s.sample_rate:.0%} of requests sampled, up to {s.max_candidates} cheaper model(s) each, "
+            f"cap ${s.monthly_budget_usd:g}/month, judge {'on' if s.judge else 'off'}, sensitive requests {'included' if s.include_sensitive else 'never shadowed'}, "
+            f"routing uses shadow evidence: {'yes' if s.use_as_evidence else 'no'}")
+
+
+@shadow_app.command("status")
+def shadow_status():
+    """Settings, this month's shadow spend, and what has been measured so far."""
+    from .shadow import aggregate, spent_this_month
+    cfg = Config.from_env()
+    store = _store()
+    s = cfg.shadow
+    typer.echo(_shadow_summary(s))
+    typer.echo(f"spent this month (UTC): ${spent_this_month(store):.4f} of ${s.monthly_budget_usd:g}")
+    rows = aggregate(store)
+    if not rows:
+        typer.echo("no comparisons yet" + ("" if s.enabled else ": turn it on with `modelspend shadow on`, then restart the server (`modelspend restart`)"))
+        return
+    typer.echo(f"\n{'task':<16}{'cheaper model':<30}{'scored':>7}{'passed':>7}{'unscored':>9}")
+    for r in rows:
+        typer.echo(f"{r['category']:<16}{r['provider'] + '/' + r['model']:<30}{r['n']:>7}{r['passes']:>7}{r['unscored']:>9}")
+    typer.echo("\nPassed = the cheaper model gave an answer as good as the one you used. Run `modelspend savings` for what that means in dollars.")
+
+
+@shadow_app.command("on")
+def shadow_on():
+    """Start comparing cheaper models on a sample of your real requests (restart the server afterwards)."""
+    s = _write_shadow(Config.from_env(), enabled=True)
+    typer.echo(_shadow_summary(s))
+    typer.echo("Shadow calls cost real money, capped as above, and are recorded under project 'modelspend-shadow'. Prompts are held in memory only; "
+               "nothing but verdicts and counts is stored. Restart a running server to apply: modelspend restart")
+
+
+@shadow_app.command("off")
+def shadow_off():
+    """Stop shadow evaluation (what was measured is kept)."""
+    typer.echo(_shadow_summary(_write_shadow(Config.from_env(), enabled=False)))
+
+
+@shadow_app.command("set")
+def shadow_set(rate: Optional[float] = typer.Option(None, help="Fraction of requests to sample, 0 to 1 (0.05 = 5%)."),
+               budget: Optional[float] = typer.Option(None, help="Hard ceiling in USD per UTC month."),
+               max_candidates: Optional[int] = typer.Option(None, help="Cheaper models tried per sampled request (1-5)."),
+               judge: Optional[bool] = typer.Option(None, "--judge/--no-judge", help="Use a judge model when answers differ and there are no validators (costs money)."),
+               include_sensitive: Optional[bool] = typer.Option(None, "--include-sensitive/--no-include-sensitive", help="Also shadow requests marked sensitive."),
+               target_n: Optional[int] = typer.Option(None, help="Stop sampling a model/task pair at this many scored comparisons.")):
+    """Change shadow settings (validated before saving)."""
+    changes = {k: v for k, v in (("sample_rate", rate), ("monthly_budget_usd", budget), ("max_candidates", max_candidates), ("judge", judge),
+                                 ("include_sensitive", include_sensitive), ("target_n", target_n)) if v is not None}
+    if not changes:
+        raise typer.BadParameter("nothing to change: give at least one option, e.g. --rate 0.1 --budget 10")
+    typer.echo(_shadow_summary(_write_shadow(Config.from_env(), **changes)))
+
+
+@shadow_app.command("apply")
+def shadow_apply(profile: str = typer.Option("balanced", help="Judge against this profile's bars (plus your own thresholds)."),
+                 yes: bool = typer.Option(False, "--yes", help="Do it. Without this, only show what would change.")):
+    """Let routing use shadow results as evidence where you have none of your own. Shows what would change first; undo with `shadow revert`."""
+    from .savings import build_savings
+    cfg = Config.from_env()
+    rep = build_savings(_store(), cfg, profile=profile)
+    ready = [r for r in rep["rows"] if r["state"] == "ready"]
+    if not ready:
+        typer.echo("No task type has enough shadow evidence to clear its bar yet, so applying would not change any routing decision. "
+                   "Keep collecting (`modelspend shadow status`).")
+    for r in ready:
+        b = r["recommended"]
+        typer.echo(f"  {r['category']}: {b['model']} cleared the bar ({b['detail']}); routing could choose it instead of {r['top_model']}, "
+                   f"projected saving ${b['projected_saving_usd']:.4f} on the traffic in the window")
+    if cfg.shadow.use_as_evidence:
+        typer.echo("Already applied.")
+        return
+    if not yes:
+        typer.echo("\nNothing changed. Run again with --yes to apply. Your own eval evidence always wins where you have it; undo any time with `modelspend shadow revert`.")
+        return
+    _write_shadow(cfg, use_as_evidence=True)
+    typer.echo("\nApplied: routing now treats shadow results as evidence where you have no eval evidence for that model and task type. "
+               "Restart a running server to pick it up: modelspend restart. Undo: modelspend shadow revert")
+
+
+@shadow_app.command("revert")
+def shadow_revert():
+    """Routing stops using shadow results (they are kept, and still shown by `savings`)."""
+    _write_shadow(Config.from_env(), use_as_evidence=False)
+    typer.echo("Routing no longer uses shadow evidence. Restart a running server to pick it up: modelspend restart")
+
+
+@app.command()
+def savings(since: str = typer.Option("30d", help="Window for your spend: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+            profile: str = typer.Option("balanced", help="Judge against this profile's bars (plus your own thresholds)."),
+            project: Optional[str] = typer.Option(None, help="Only this project's traffic."),
+            fmt: str = typer.Option("table", "--format", help="table or json.")):
+    """What you could save by moving each kind of work to a cheaper model, and how sure ModelSpend is (a projection, with its evidence)."""
+    from .report import parse_since
+    from .savings import build_savings, to_table
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format must be table or json")
+    if profile not in ("economy", "balanced", "high_assurance"):
+        raise typer.BadParameter("--profile must be economy, balanced or high_assurance")
+    cfg = Config.from_env()
+    try:
+        rep = build_savings(_store(), cfg, profile=profile, since=parse_since(since), project=project)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep))
 
 
 @reconcile_app.command("import")
