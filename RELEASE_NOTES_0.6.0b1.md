@@ -29,7 +29,7 @@ This release is about **checking ModelSpend's numbers against the provider's**. 
 
 - **Token counts match OpenAI's exactly** on the days checked: on 2026-10-12 and 2026-10-14, ModelSpend's totals per model equalled OpenAI's usage export for `gpt-4.1-nano` (111 and 181 tokens) and `gpt-5-mini` (201 tokens), with no difference.
 - The **OpenAI completions usage CSV export** imports correctly, including its blank rows for quiet days and its float-formatted numbers.
-- The reconciliation is also what found the eval-ledger gap above.
+- The reconciliation is also what found the eval-ledger gap above. **After the fix, a live calibration (`eval calibrate --mode live`, OpenAI, 3 models, 16 cases each) was recorded in full:** 48 requests under `modelspend-eval`, and the ledger's total ($0.020541) equalled the calibration's own printed spend exactly.
 - **From earlier releases:** routing, streaming, structured output (strict and non-strict) and failover and escalation on OpenAI; Anthropic end to end; per-project and per-agent reports, budgets, the Costs tab, aliases, conversation stickiness and your own evidence bars.
 
 ## Not yet verified
@@ -37,7 +37,7 @@ This release is about **checking ModelSpend's numbers against the provider's**. 
 - **Cost reconciliation.** OpenAI's usage export has no cost column, so only tokens were compared. Cost handling is tested but has not been checked against a real costs export.
 - **Whether OpenAI's `input_tokens` already includes cached tokens** is assumed (the default for OpenAI). The sample export had no cached tokens.
 - **Anthropic, Google and xAI export formats.** Their column names and JSON shapes are based on documentation, not real files. `--map` covers most naming differences.
-- **The fix for the eval gap itself:** a day of live evals after the fix, followed by a reconciliation, has not been run yet; the fix is covered by tests.
+- **The eval-ledger fix against the provider's numbers:** a live calibration after the fix was recorded correctly (see above), but a provider export covering that day has not been reconciled yet.
 - Fetching usage straight from the providers' admin usage APIs is **not built**; it would need an admin-level key.
 - Gemini and xAI adapters (tested against simulated responses only), concurrent budget enforcement across processes and the dashboard's budget form, the Docker code sandbox, and automatic price refresh against the real pages.
 - macOS and Linux with Python 3.10+ only; Windows is untested.

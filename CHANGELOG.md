@@ -11,7 +11,7 @@
 - **Fix: live `eval run` and `eval calibrate` spend was missing from the usage ledger.** Found by reconciling with OpenAI's export: about 35,000 tokens (about 190 requests) on one day
   were in OpenAI's numbers but not in `modelspend report`, because the eval commands ran without a usage store and `run_single` never recorded. Their calls are now recorded under
   `project=modelspend-eval` (`agent=calibrate` or `eval-run`, task `eval`), so they show in reports, the Costs tab and reconciliation, and can be filtered out with
-  `--project`. Stickiness is forced off for eval requests so recording cannot change routing. Evals run before this release were not recorded and cannot be recovered.
+  `--project` (checked live: a 48-call calibration was recorded in full and the ledger total equalled the printed spend). Stickiness is forced off for eval requests so recording cannot change routing. Evals run before this release were not recorded and cannot be recovered.
 - **Reconcile output:** a ModelSpend row with zero tokens and nothing from the provider (a call that failed before billing) is no longer flagged, and the result line says why
   provider-higher rows are not flagged instead of "all rows within tolerance".
 - **Fix: first use from two processes on one database could crash after the provider call.** `Store.salt()` selected then inserted, so two processes both seeing "no salt yet" made the
