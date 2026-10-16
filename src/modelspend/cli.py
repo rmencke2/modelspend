@@ -964,10 +964,15 @@ def eval_calibrate(mode: str = "mock", providers: Optional[str] = None, budget: 
         eng = Engine(_catalog(cfg, catalog), cfg, build_adapters(cfg), Store(cfg.db_path))  # type: ignore[arg-type]  # live spend is recorded under project modelspend-eval
     ds = dataset or (fixtures.stem if fixtures is not None and fixtures.is_file() else fixtures.name if fixtures is not None else "modelspend-calibration-v1")
     fails: list[dict] = []
-    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds, fails if show_failures else None))
+    stats: dict[str, int] = {}
+    ev, spent, stopped = asyncio.run(calibrate(eng, tasks, provs, budget if mode == "live" else None, sandbox, ds, fails, stats))
     typer.echo(("SIMULATED " if mode == "mock" else "") + f"calibration spend ${spent:.6f}" + (f" | {stopped}" if stopped else ""))
     for ref, cats in sorted(ev.items()):
         typer.echo(f"  {ref}: " + ", ".join(f"{c} {e.passes}/{e.n}" for c, e in sorted(cats.items())))
+    if stats.get("retried") or stats.get("still_truncated"):
+        from .eval.harness import TRUNCATION_HEADROOM
+        typer.echo(f"note: {stats.get('retried', 0)} call(s) stopped at the output limit and were retried once with {TRUNCATION_HEADROOM} more tokens "
+                   f"(reasoning models spend output tokens thinking); {stats.get('still_truncated', 0)} still stopped at the limit and count as failures marked 'truncated'.")
     if show_failures:
         typer.echo("\nfailed cases (the model's answer is shown shortened, on this screen only):" if fails else "\nno failed cases")
         for f in fails:

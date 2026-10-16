@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import time
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -197,6 +198,34 @@ def default_premium(engine: Engine, providers: list[str]) -> str:
 
 # Live eval calls cost real money, so they are recorded in the usage ledger under their own project (filter with --project modelspend-eval).
 # Stickiness is off so that recording conversations can never change which model an eval case is routed to.
+TRUNCATION_HEADROOM = 1024  # extra output tokens for the single retry of a call that stopped at the limit
+
+
+async def run_with_headroom(engine: Engine, req: RouteRequest, cand: Candidate, ledger: Ledger, max_extra_usd: float | None = None,
+                            stats: dict[str, int] | None = None) -> tuple[Any, bool]:
+    """run_single, and if the model stopped at the output limit retry ONCE with more room. Returns (response, still_truncated).
+
+    Reasoning models spend output tokens thinking; at a tight cap they can return no visible answer at all, which says nothing about
+    quality. Both calls are recorded in the ledger. The retry is skipped if its worst case would exceed `max_extra_usd`.
+    """
+    resp, _ = await engine.run_single(req, cand, ledger)
+    if not resp or resp.finish_reason != "length":
+        return resp, False
+    # the engine sends the CANDIDATE's output cap, so the candidate must be rebuilt for the larger request, not just the request
+    bigger = req.model_copy(update={"max_output_tokens": (req.max_output_tokens or MAX_OUT) + TRUNCATION_HEADROOM})
+    again = next((c for c in _eligible(engine, bigger) if (c.provider, c.model) == (cand.provider, cand.model)), None)
+    worst = again.worst_case_cost_usd if again else None
+    if again is None or (max_extra_usd is not None and (worst is None or worst > max_extra_usd - ledger.used)):  # max_extra_usd = what was left before this call
+        if stats is not None:
+            stats["still_truncated"] = stats.get("still_truncated", 0) + 1
+        return resp, True
+    resp, _ = await engine.run_single(bigger, again, ledger)
+    if stats is not None:
+        stats["retried"] = stats.get("retried", 0) + 1
+        stats["still_truncated"] = stats.get("still_truncated", 0) + int(bool(resp and resp.finish_reason == "length"))
+    return resp, bool(resp and resp.finish_reason == "length")
+
+
 EVAL_TAGS_RUN = {"project": "modelspend-eval", "agent": "eval-run", "sticky": False}
 EVAL_TAGS_CALIBRATE = {"project": "modelspend-eval", "agent": "calibrate", "sticky": False}
 
@@ -208,6 +237,7 @@ async def evaluate(
     premium = premium or default_premium(engine, providers)
     prem_provider = premium.split("/", 1)[0]
     spent_total, outcomes, done, stopped = 0.0, [], 0, None
+    trunc: dict[str, int] = {}
 
     for t in tasks:
         remaining = None if budget_usd is None else budget_usd - spent_total
@@ -232,9 +262,13 @@ async def evaluate(
             ledger = Ledger(remaining)
             req = prem_req if arm == "premium" else cheap_req
             try:
-                resp, lat = await engine.run_single(req, cand, ledger)
+                t_arm = time.monotonic()
+                resp, cut = await run_with_headroom(engine, req, cand, ledger, None if remaining is None else remaining, trunc)
+                lat = int((time.monotonic() - t_arm) * 1000)
                 text = resp.text if resp else ""
                 ok, fails = grade(t, text, engine.sandbox_runner, use_sandbox) if resp else (False, ["skipped"])
+                if cut and not ok:
+                    fails = [f"truncated at the output limit even with {TRUNCATION_HEADROOM} extra tokens"] + fails
                 o = Outcome(t.id, t.category, arm, ok, ledger.used, lat, provider=cand.provider, model=cand.model, fails=fails)
             except ProviderError as e:
                 o = Outcome(t.id, t.category, arm, False, ledger.used, 0, provider=cand.provider, model=cand.model, error=e.kind)
@@ -250,7 +284,9 @@ async def evaluate(
         outcomes += task_outcomes
         spent_total += sum(o.cost_usd for o in task_outcomes)
         done += 1
-    return build_report(outcomes, mode, premium, providers, len(tasks), done, stopped, budget_usd, spent_total, engine)
+    rep = build_report(outcomes, mode, premium, providers, len(tasks), done, stopped, budget_usd, spent_total, engine)
+    rep["output_limit_retries"] = {"retried": trunc.get("retried", 0), "still_truncated": trunc.get("still_truncated", 0), "extra_tokens": TRUNCATION_HEADROOM}
+    return rep
 
 
 def build_report(outcomes: list[Outcome], mode: str, premium: str, providers: list[str], n_tasks: int, done: int,
@@ -328,7 +364,8 @@ def render_markdown(rep: dict[str, Any]) -> str:
 
 async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str], budget_usd: float | None = None,
                     use_sandbox: bool = False, dataset: str = "modelspend-calibration-v1",
-                    failures: list[dict[str, Any]] | None = None) -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
+                    failures: list[dict[str, Any]] | None = None,
+                    stats: dict[str, int] | None = None) -> tuple[dict[str, dict[str, EvidenceItem]], float, str | None]:
     """Run every eligible model on every calibration task of each category; return measured evidence."""
     from datetime import date
     ev: dict[str, dict[str, EvidenceItem]] = {}
@@ -342,8 +379,10 @@ async def calibrate(engine: Engine, tasks: list[EvalTask], providers: list[str],
             ledger = Ledger(None)
             why, shown = "", ""
             try:
-                resp, _ = await engine.run_single(req, cand, ledger)
+                resp, cut = await run_with_headroom(engine, req, cand, ledger, None if budget_usd is None else budget_usd - spent, stats)
                 ok, fails = grade(t, resp.text, engine.sandbox_runner, use_sandbox) if resp else (False, ["no response"])
+                if cut and not ok:
+                    fails = [f"truncated at the output limit even with {TRUNCATION_HEADROOM} extra tokens"] + fails
                 why, shown = "; ".join(fails), (resp.text if resp else "")
             except ProviderError as e:
                 ok, why = False, f"provider error ({e.kind})"

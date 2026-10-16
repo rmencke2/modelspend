@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0b2 - unreleased
+
+- **Fix: reasoning models were scored as wrong when they ran out of output tokens.** Found with `eval calibrate --show-failures`: every `gpt-5-mini` failure was an empty answer (4,032 of its 4,156
+  output tokens were reasoning, under a 400-token cap), so its 0/2 on analysis, rewriting and summarization measured the cap, not quality, and the stored evidence would have unfairly excluded it from
+  routing. Calibration and the baseline arms of `eval run` now retry a cut-off call once with 1,024 more output tokens, judge the retry, record both calls in the ledger, skip the retry if it would
+  break `--budget`, and label anything still cut off as truncated. `eval calibrate` prints the number of retries; `eval run` reports `output_limit_retries`. Routed (non-eval) calls are unchanged; see
+  docs/limitations.md.
+- **Fix: a reused ledger double counted the first call.** `run_single` recorded the whole ledger on every call, so a second call on the same ledger (the new retry) re-recorded the first call's attempts.
+  Each call now records only its own attempts.
+
 ## 0.6.0b1 - 2026-10-16
 
 - **Usage reconciliation.** `modelspend reconcile import <file> --provider <name>` reads a usage export you download from the provider (CSV, JSON or JSON lines; numbers only),

@@ -472,28 +472,32 @@ class Engine:
         the caller-supplied ledger still holds the accounting for every attempt.
         """
         t0 = time.monotonic()
-        status = "ok"
+        status, start = "ok", len(ledger.attempts)  # a caller may reuse one ledger for several calls: record only this call's attempts
         try:
             resp = await self._with_retries(req, cand, "initial", ledger, {"retries": 0})
         except BaseException:
             status = "provider_error"
             raise
         finally:
-            self._record_single(req, cand, ledger, status, int((time.monotonic() - t0) * 1000))
+            self._record_single(req, cand, ledger.attempts[start:], status, int((time.monotonic() - t0) * 1000))
         return resp, int((time.monotonic() - t0) * 1000)
 
-    def _record_single(self, req: RouteRequest, cand: Candidate, ledger: Ledger, status: str, latency_ms: int) -> None:
+    def _record_single(self, req: RouteRequest, cand: Candidate, attempts: list[AttemptRecord], status: str, latency_ms: int) -> None:
         """Eval baselines and calibration calls spend real money: they belong in the usage ledger like any other call."""
-        if not self.store or not ledger.attempts:
+        if not self.store or not attempts:
             return
         total = Usage()
-        for a in ledger.attempts:
+        for a in attempts:
             total = total + a.usage
+        spent = sum(a.cost_usd or 0.0 for a in attempts if a.cost_basis == "reported_usage")
+        uncertain = sum(a.cost_usd or 0.0 for a in attempts if a.cost_basis == "uncertain_upper_estimate")
+        complete = not any(a.cost_basis == "unpriced" and a.outcome != "skipped_budget" for a in attempts)
         self.store.record_row(
             uuid.uuid4().hex[:12], req.profile.value, "eval", "n/a", cand.provider, cand.model, status, "n/a", 0, 0, 0,
-            cand.expected_cost_usd, ledger.spent if ledger.cost_complete else None, ledger.uncertain, req.max_budget_usd,
+            cand.expected_cost_usd, spent if complete else None, uncertain, req.max_budget_usd,
             total.input_tokens + total.cache_read_tokens + total.cache_write_tokens, total.output_tokens, latency_ms, "", "",
-            ledger.attempts, cache_read=total.cache_read_tokens, reasoning=total.reasoning_tokens, total=ledger.tokens, tags=_tags(req))
+            attempts, cache_read=total.cache_read_tokens, reasoning=total.reasoning_tokens,
+            total=total.input_tokens + total.cache_read_tokens + total.cache_write_tokens + total.output_tokens, tags=_tags(req))
 
     # ================================================================ streaming
     async def stream(self, req: RouteRequest) -> AsyncIterator[StreamEvent]:

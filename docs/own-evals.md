@@ -93,6 +93,10 @@ modelspend restart                                           # a running server 
   A setting can only tighten this: the `high_assurance` profile always requires evidence.
 - Invalid settings (for example `min_pass_rate: 95` instead of `0.95`) stop ModelSpend with an error rather than being ignored.
 
+## Output limits and reasoning models
+
+Evals cap each answer at 400 tokens. Reasoning models spend output tokens thinking, so on harder cases they can hit the cap and return **no visible answer**, which says nothing about quality (seen live with `gpt-5-mini`, which scored 0/2 on three categories for this reason). So when a call stops at the limit, `eval calibrate` and the two baseline arms of `eval run` **retry it once with 1,024 more tokens** and judge the retry. Both calls are in the usage ledger (the retry costs real money, and is skipped if it would break `--budget`). A call that is still cut off counts as a failure with the reason `truncated at the output limit ...`. `eval calibrate` prints how many calls were retried. The ModelSpend arm of `eval run` is not changed: it is the product's real behaviour, which escalates on a cut-off answer.
+
 ## Limits
 
 - Measured quality is **only as good as your validators and cases**, and small n gives wide intervals. A pass means "your checks passed", not "the answer is right".
