@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0b1 - unreleased
+## 0.6.0b1 - 2026-10-16
 
 - **Usage reconciliation.** `modelspend reconcile import <file> --provider <name>` reads a usage export you download from the provider (CSV, JSON or JSON lines; numbers only),
   and `modelspend reconcile run` compares tokens and cost per model with ModelSpend's own records over the days the export covers (`--by-day`, `--tolerance`, `--exclusive`,
