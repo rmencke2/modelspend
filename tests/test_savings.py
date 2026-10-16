@@ -317,3 +317,27 @@ def test_the_live_check_example_is_valid_python_and_refuses_politely_when_shadow
     src = (Path(__file__).resolve().parent.parent / "examples" / "shadow_live_check.py").read_text()
     ast.parse(src)
     assert "modelspend shadow set --rate 1 --budget 0.50" in src and "wait_for_shadow" in src and "SystemExit" in src
+
+
+def test_failures_caused_by_the_output_cap_are_called_out_not_blamed_on_the_model(cfg2, run, tmp_path):
+    s = Store(":memory:")
+    traffic(s)
+    for i in range(30):  # a reasoning model with a tight max_output_tokens: empty answers, cut off
+        s.record_shadow(request_id=f"t{i}", project=None, agent=None, category="classification", used_provider="openai", used_model="gpt-4.1",
+                        cand_provider="openai", cand_model="gpt-5-mini", method="truncated", verdict="fail" if i < 27 else "pass", reason="truncated" if i < 27 else "exact_match",
+                        used_cost=0.01, cand_cost=0.002, judge_cost=0.0, cand_input=5, cand_output=64)
+    c = only(rep(s, cfg2))["candidates"][0]
+    assert (c["model"], c["n"], c["passes"], c["truncated"]) == (MID, 30, 3, 27) and c["verdict"] == "below_bar"
+    t = to_table(rep(s, cfg2))
+    assert "27 of 27 failures on classification were cut off at your max_output_tokens" in t and "raise max_output_tokens" in t
+
+
+def test_cli_status_explains_why_comparisons_passed_failed_or_went_unscored(run, tmp_path):
+    s = Store(str(tmp_path / "u.db"))
+    for reason, verdict, n in (("exact_match", "pass", 5), ("truncated", "fail", 3), ("judge_unparseable", "unscored", 2)):
+        for i in range(n):
+            s.record_shadow(request_id=f"{reason}{i}", project=None, agent=None, category="classification", used_provider="openai", used_model="gpt-4.1",
+                            cand_provider="openai", cand_model="gpt-5-mini", method="x", verdict=verdict, reason=reason, used_cost=0.01, cand_cost=0.001,
+                            judge_cost=0.0, cand_input=1, cand_output=1)
+    out = run("shadow", "status").output
+    assert "why:" in out and "same answer as the model you used" in out and "cut off at your max_output_tokens" in out and "judge reply could not be read" in out

@@ -282,7 +282,7 @@ function savingsBars(el,rows){el.textContent='';if(!rows.length){el.textContent=
   track.appendChild(bar);row.append(nm,track,tot);el.appendChild(row)})}
 function savingsTable(el,rows){const head='<tr><th>Task</th><th class="n">Spend now</th><th>Top model</th><th>State</th><th>Best cheaper model</th><th class="n">Passed</th><th class="n">Lower bound</th><th class="n">Cost vs now</th><th class="n">Projected saving</th></tr>';
  el.innerHTML=head+(rows.map(r=>{const b=r.recommended,p=b||r.candidates[0],st=STATE[r.state];
-  const need=!b&&p&&p.samples_needed?` <span class="sv-need">needs ${n0(p.samples_needed)} more</span>`:'';
+  const need=(!b&&p&&p.samples_needed?` <span class="sv-need">needs ${n0(p.samples_needed)} more</span>`:'')+(p&&p.truncated?` <span class="sv-need">${n0(p.truncated)} cut off at your output cap</span>`:'');
   return `<tr><td>${esc(r.category)}</td><td class="n">${esc(cost(r.cost,r.cost_complete))}</td><td>${esc(short(r.top_model))}</td>
    <td class="st ${st[2]}"><span aria-hidden="true">${st[0]}</span> <b>${esc(st[1])}</b>${need}</td><td>${esc(p?short(p.model):'-')}</td>
    <td class="n">${p?p.passes+'/'+p.n:'-'}</td><td class="n">${p&&p.lower_bound!=null?p.lower_bound.toFixed(2):'-'}</td>

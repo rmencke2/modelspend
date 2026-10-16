@@ -79,7 +79,7 @@ def build_savings(store: Store, cfg: Config, *, profile: str = "balanced", since
             ratio = (a["cand_cost"] / a["used_cost"]) if a["cost_rows"] and a["used_cost"] else None
             movable = t["cost"] - t["models"].get(ref, {"cost": 0.0})["cost"]  # spend on this model already needs no move
             saving = movable * (1 - ratio) if ratio is not None and ratio < 1 else 0.0
-            cands.append({"model": ref, "n": a["n"], "passes": a["passes"], "unscored": a["unscored"], "lower_bound": lb, "verdict": verdict, "detail": detail,
+            cands.append({"model": ref, "n": a["n"], "passes": a["passes"], "unscored": a["unscored"], "truncated": a["truncated"], "lower_bound": lb, "verdict": verdict, "detail": detail,
                           "cost_ratio": ratio, "projected_saving_usd": saving, "samples_needed": _needed(verdict, a["n"], bar)})
         clearing = [c for c in cands if c["verdict"] == "clears" and c["projected_saving_usd"] > 0]
         best = max(clearing, key=lambda c: c["projected_saving_usd"]) if clearing else None
@@ -117,6 +117,7 @@ def to_table(rep: dict[str, Any]) -> str:
     t = rep["totals"]
     head = ["task", "spend now", "top model", "state", "best cheaper model", "passed", "lower bound", "cost vs now", "projected saving"]
     rows = [head]
+    cut: list[str] = []
     for r in rep["rows"]:
         b = r["recommended"]
         pick = b or (r["candidates"][0] if r["candidates"] else None)
@@ -126,6 +127,8 @@ def to_table(rep: dict[str, Any]) -> str:
                      (f"{pick['lower_bound']:.2f}" if pick and pick["lower_bound"] is not None else "-"),
                      (f"{pick['cost_ratio'] - 1:+.0%}" if pick and pick["cost_ratio"] is not None else "-"),
                      (f"{_usd(b['projected_saving_usd'])} ({b['projected_saving_usd'] / r['cost']:.0%})" if b and r["cost"] else "-")])
+        if pick and pick["truncated"]:
+            cut.append(f"{pick['model']}: {pick['truncated']} of {pick['n'] - pick['passes']} failures on {r['category']} were cut off at your max_output_tokens, not wrong answers")
     widths = [max(len(x[i]) for x in rows) for i in range(len(head))]
     lines = []
     for n, x in enumerate(rows):
@@ -139,4 +142,6 @@ def to_table(rep: dict[str, Any]) -> str:
         out += "\nShadow evaluation is OFF, so no new evidence is being collected. Turn it on with: modelspend shadow on"
     else:
         out += f"\nShadow spend this month: {_usd(t['shadow_spend_this_month'])} of {_usd(t['shadow_budget'])}."
+    if cut:
+        out += "\n\nNote: " + "; ".join(cut) + ". Reasoning models spend output tokens thinking: raise max_output_tokens before judging them."
     return out + "\n\n" + "\n".join(f"* {n}" for n in rep["notes"])

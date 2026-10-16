@@ -29,7 +29,7 @@ if ms.engine.shadow is None:
     raise SystemExit("Shadow evaluation is off. Run: modelspend shadow set --rate 1 --budget 0.50 && modelspend shadow on")
 
 for i, ticket in enumerate((TICKETS * 2)[:30]):
-    kw = dict(pin=PREMIUM, project="shadow-demo", agent="live-check", task_type="classification", max_output_tokens=64)
+    kw = dict(pin=PREMIUM, project="shadow-demo", agent="live-check", task_type="classification", max_output_tokens=512)  # room for reasoning models to think: see docs/shadow.md
     if i % 2 == 0:
         kw["validators"] = [ValidatorSpec(type="allowed_labels", labels=["billing", "bug", "other"])]
     r = ms.route(f"Classify this support ticket as billing, bug or other. Reply with the label only.\n\n{ticket}", **kw)

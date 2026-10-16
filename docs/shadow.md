@@ -37,7 +37,7 @@ The ceiling is checked per process: if several ModelSpend processes share one da
 
 *Passed* means **the cheaper model gave an answer as good as the one you used**, not that the answer is correct. With validators the check is against them. Without them, a candidate can agree with a wrong answer, and a judge model has its own biases. Shadow evidence therefore measures how safely a cheaper model can **stand in for the model you use today**, which is the question a routing decision asks, and it is labelled as shadow evidence everywhere it is shown. If correctness matters, give your requests validators, or measure with your own cases ([own-evals](own-evals.md)); your own eval evidence always wins over shadow evidence.
 
-A candidate that is **cut off at the output cap** you set counts as a failure (that is what routing it there would give you).
+A candidate that is **cut off at the output cap** you set counts as a failure (that is what routing it there would give you). This matters for **reasoning models**: they spend output tokens thinking, so with a tight `max_output_tokens` (say 64) they can return nothing at all. The first live run showed exactly that: `gpt-5-mini` passed 1 of 27 with a 64-token cap. The savings report and `modelspend shadow status` say how many failures were cut-offs and why comparisons ended as they did (fixed reason codes only), so a model is not blamed for a cap you set. Give the requests you shadow room (a larger `max_output_tokens`) before judging a reasoning model.
 
 ## The savings report
 
@@ -70,6 +70,10 @@ A typo or out-of-range value is an error, not ignored.
 
 `python examples/shadow_live_check.py` (after `modelspend shadow set --rate 1 --budget 0.50` and `modelspend shadow on`) sends 30 ticket classifications to your premium model, lets ModelSpend try the cheaper ones in the background, and prints what was measured and the savings projection.
 
+## First live run (2026-10-17, OpenAI, 30 ticket classifications pinned to `gpt-4.1`)
+
+`gpt-4.1-nano` passed 29 of 29 scored comparisons (1 unscored; lower bound 0.88, 95% cheaper on those requests), so the report marked classification ready. `gpt-5-mini` passed 1 of 27: the cap above. The whole run, shadow calls and judge included, cost $0.0038 against a $0.50 cap. Thirty requests of one easy task type say little about real traffic; treat it as proof that the mechanism works end to end, not as a measured saving.
+
 ## Not verified yet
 
-Everything above is covered by tests against simulated providers. It has **not yet been run against live providers**: how often real judge models agree with exact-match and validator verdicts, and how well the projected savings match what happens after switching, are open questions (see [limitations](limitations.md)).
+Covered by tests against simulated providers, and run once live (above). Still open: how often real judge models agree with exact-match and validator verdicts, how the savings projection compares with what happens after switching, and behaviour on varied real traffic (see [limitations](limitations.md)).

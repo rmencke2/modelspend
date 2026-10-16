@@ -80,9 +80,25 @@ def aggregate(store: Store, since: float | None = None) -> list[dict[str, Any]]:
          "sum(case when used_cost is not null and cand_cost is not null then used_cost else 0 end) used_cost, "
          "sum(case when used_cost is not null and cand_cost is not null then cand_cost else 0 end) cand_cost, "
          "sum(case when used_cost is not null and cand_cost is not null then 1 else 0 end) cost_rows, "
+         "sum(case when reason = 'truncated' then 1 else 0 end) truncated, "
          "sum(coalesce(judge_cost, 0)) judge_cost, max(ts) last_ts "
          "from shadow_results where (? is null or ts >= ?) group by 1, 2, 3 order by 3, 1, 2")
     return [dict(r) for r in store.db.execute(q, (since, since))]
+
+
+def reason_counts(store: Store) -> list[dict[str, Any]]:
+    """Why comparisons ended as they did, per candidate model and task: the fixed reason codes only (never any text)."""
+    q = ("select cand_provider || '/' || cand_model model, category, verdict, reason, count(*) n from shadow_results "
+         "group by 1, 2, 3, 4 order by 2, 1, 3, 4")
+    return [dict(r) for r in store.db.execute(q)]
+
+
+REASON_TEXT = {
+    "exact_match": "same answer as the model you used", "validators_passed": "passed your validators", "judge_pass": "judge: as good",
+    "validators_failed": "failed your validators", "judge_fail": "judge: not as good",
+    "truncated": "cut off at your max_output_tokens before answering (reasoning models need room to think)",
+    "judge_unparseable": "judge reply could not be read", "judge_unavailable": "judge call failed", "no_comparison": "answers differed and no judge was used",
+    "provider_error": "the model's call failed", "refused_or_tools": "refused or returned tool calls"}
 
 
 def shadow_evidence(store: Store) -> dict[tuple[str, str], EvidenceItem]:

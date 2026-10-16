@@ -29,7 +29,7 @@ Guide, privacy, cost and limits: [docs/shadow.md](docs/shadow.md). Try it for a 
 
 ## Not yet verified
 
-- **Everything above was tested against simulated providers only.** Not yet run live: how often real judge models agree with validator and exact-match verdicts, whether the projected saving matches what happens after switching, and the dashboard tab on real traffic (it was checked in a browser against synthetic data, in light, dark and phone width).
+- **Run live once, on a small sample:** 30 ticket classifications through OpenAI. `gpt-4.1-nano` passed 29 of 29 scored comparisons (lower bound 0.88, 95% cheaper on those requests) for $0.0038 of shadow spend; `gpt-5-mini` passed 1 of 27 because a 64-token output cap cut its reasoning off (the report now says so). Not yet checked: how often real judge models agree with validator and exact-match verdicts, whether the projected saving matches what happens after switching, varied real traffic, and the dashboard tab with live data (it was checked in a browser against synthetic data, in light, dark and phone width).
 - **Agreement with your current model is not correctness.** Without validators a candidate can agree with a wrong answer, and a judge model has its own biases. Use validators where correctness matters; your own eval evidence always wins over shadow evidence.
 - The monthly cap is checked per process: several processes sharing one database can exceed it together by the calls in flight. Streamed requests are not shadowed.
 - Everything listed as not yet verified in [0.6.0b1](RELEASE_NOTES_0.6.0b1.md) and [0.6.0b2](RELEASE_NOTES_0.6.0b2.md) still applies (Gemini and xAI live, cost reconciliation against a real costs export, the Docker sandbox, automatic price refresh, Windows).

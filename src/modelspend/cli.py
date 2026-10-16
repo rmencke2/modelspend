@@ -528,6 +528,10 @@ def shadow_status():
     typer.echo(f"\n{'task':<16}{'cheaper model':<30}{'scored':>7}{'passed':>7}{'unscored':>9}")
     for r in rows:
         typer.echo(f"{r['category']:<16}{r['provider'] + '/' + r['model']:<30}{r['n']:>7}{r['passes']:>7}{r['unscored']:>9}")
+    from .shadow import REASON_TEXT, reason_counts
+    typer.echo("\nwhy:")
+    for r in reason_counts(store):
+        typer.echo(f"  {r['category']:<16}{r['model']:<30}{r['verdict']:<9}{r['n']:>4}  {REASON_TEXT.get(r['reason'], r['reason'])}")
     typer.echo("\nPassed = the cheaper model gave an answer as good as the one you used. Run `modelspend savings` for what that means in dollars.")
 
 
