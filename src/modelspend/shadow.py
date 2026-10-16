@@ -52,6 +52,18 @@ def month_start(now: float | None = None) -> float:
     return d.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
+def parse_pass(text: str) -> bool | None:
+    """The judge's {"pass": true|false}, tolerating code fences and a sentence around it. Anything else is None (unscored, never guessed)."""
+    t = (text or "").strip()
+    for cand in (t.strip("`").removeprefix("json").strip(), *re.findall(r"\{[^{}]*\}", t)):
+        try:
+            v = json.loads(cand)["pass"]
+        except Exception:  # noqa: BLE001
+            continue
+        return v if isinstance(v, bool) else None
+    return None
+
+
 def normalize_answer(text: str) -> str:
     t = _FENCE.sub("", (text or "").strip()).strip().strip("\"'").strip()
     return re.sub(r"\s+", " ", t).rstrip(" .!").casefold()
@@ -86,6 +98,23 @@ def aggregate(store: Store, since: float | None = None) -> list[dict[str, Any]]:
     return [dict(r) for r in store.db.execute(q, (since, since))]
 
 
+def reset(store: Store, model: str | None = None, category: str | None = None, dry_run: bool = False) -> int:
+    """Forget shadow comparisons (all, or one candidate model and/or task type). The ledger of what was spent is untouched."""
+    where, params = ["1=1"], []
+    if model:
+        where.append("cand_provider || '/' || cand_model = ?")
+        params.append(model)
+    if category:
+        where.append("category = ?")
+        params.append(category)
+    with store.lock:
+        n = store.db.execute(f"select count(*) from shadow_results where {' and '.join(where)}", params).fetchone()[0]
+        if n and not dry_run:
+            store.db.execute(f"delete from shadow_results where {' and '.join(where)}", params)
+            store.db.commit()
+    return n
+
+
 def reason_counts(store: Store) -> list[dict[str, Any]]:
     """Why comparisons ended as they did, per candidate model and task: the fixed reason codes only (never any text)."""
     q = ("select cand_provider || '/' || cand_model model, category, verdict, reason, count(*) n from shadow_results "
@@ -96,7 +125,12 @@ def reason_counts(store: Store) -> list[dict[str, Any]]:
 REASON_TEXT = {
     "exact_match": "same answer as the model you used", "validators_passed": "passed your validators", "judge_pass": "judge: as good",
     "validators_failed": "failed your validators", "judge_fail": "judge: not as good",
-    "truncated": "cut off at your max_output_tokens before answering (reasoning models need room to think)",
+    "truncated": "cut off at your max_output_tokens before answering: not counted (reasoning models need room to think)",
+    "provider_error_auth": "the model's call was rejected: key or permission", "provider_error_rate_limit": "the model's call was rate limited",
+    "provider_error_quota": "the model's call failed: out of quota or credit", "provider_error_timeout": "the model's call timed out",
+    "provider_error_server": "the provider had a server error", "provider_error_bad_request": "the provider rejected the request",
+    "provider_error_connection": "the connection to the provider failed", "provider_error_unsupported": "the provider does not support this request",
+    "provider_error_unknown": "the model's call failed for an unrecognised reason",
     "judge_unparseable": "judge reply could not be read", "judge_unavailable": "judge call failed", "no_comparison": "answers differed and no judge was used",
     "provider_error": "the model's call failed", "refused_or_tools": "refused or returned tool calls"}
 
@@ -248,8 +282,8 @@ class Shadow:
         method, verdict, reason, cost, cresp = "none", "unscored", "provider_error", None, None
         try:
             cresp, _ = await eng.run_single(sreq, cand, ledger, task="shadow")
-        except ProviderError:
-            pass
+        except ProviderError as e:
+            reason = f"provider_error_{re.sub(r'[^a-z_]', '', str(e.kind).lower())}"
         if cresp is not None:
             cmodel = eng.catalog.get(f"{cand.provider}/{cand.model}")
             cost = cost_for(cmodel, cresp.usage) if cmodel.pricing is not None and cmodel.pricing.known else None
@@ -267,6 +301,10 @@ class Shadow:
         eng = self.engine
         if cresp.finish_reason == "content_filter" or cresp.tool_calls:
             return "none", "unscored", "refused_or_tools"
+        if cresp.finish_reason == "length":
+            # Cut off at the cap on the request: that says how much room it was given, not how good the model is (reasoning models spend output
+            # tokens thinking). Not counted as a pass or a fail, and shown separately, so no model is marked down for a cap you set.
+            return "none", "unscored", "truncated"
         if not self._needs_judge(req):
             from .validation import validate
             rep = await validate(req, cresp.text, truncated=cresp.finish_reason == "length", judge=None, sandbox_runner=eng.sandbox_runner)
@@ -274,8 +312,6 @@ class Shadow:
                 return "validators", "pass", "validators_passed"
             if rep.status == "failed":
                 return "validators", "fail", "validators_failed"
-        if cresp.finish_reason == "length":
-            return "truncated", "fail", "truncated"  # it would have been cut off at the cap you set: that is what routing it there would give you
         a, b = normalize_answer(used_text), normalize_answer(cresp.text)
         if a and a == b:
             return "exact", "pass", "exact_match"
@@ -314,10 +350,7 @@ class Shadow:
             self.engine._record_single(jreq, jc, ledger.attempts[start:], status, int((time.monotonic() - t0) * 1000), task="shadow")
         if resp is None:
             return "judge", "unscored", "judge_unavailable"
-        try:
-            ok = json.loads(resp.text.strip().strip("`").removeprefix("json").strip())["pass"]
-        except Exception:  # noqa: BLE001
-            return "judge", "unscored", "judge_unparseable"
+        ok = parse_pass(resp.text)
         if not isinstance(ok, bool):
             return "judge", "unscored", "judge_unparseable"
         return "judge", "pass" if ok else "fail", "judge_pass" if ok else "judge_fail"

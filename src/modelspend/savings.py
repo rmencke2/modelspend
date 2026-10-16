@@ -128,7 +128,7 @@ def to_table(rep: dict[str, Any]) -> str:
                      (f"{pick['cost_ratio'] - 1:+.0%}" if pick and pick["cost_ratio"] is not None else "-"),
                      (f"{_usd(b['projected_saving_usd'])} ({b['projected_saving_usd'] / r['cost']:.0%})" if b and r["cost"] else "-")])
         if pick and pick["truncated"]:
-            cut.append(f"{pick['model']}: {pick['truncated']} of {pick['n'] - pick['passes']} failures on {r['category']} were cut off at your max_output_tokens, not wrong answers")
+            cut.append(f"{pick['model']}: {pick['truncated']} comparison(s) on {r['category']} were cut off at your max_output_tokens and are not counted")
     widths = [max(len(x[i]) for x in rows) for i in range(len(head))]
     lines = []
     for n, x in enumerate(rows):
@@ -143,5 +143,5 @@ def to_table(rep: dict[str, Any]) -> str:
     else:
         out += f"\nShadow spend this month: {_usd(t['shadow_spend_this_month'])} of {_usd(t['shadow_budget'])}."
     if cut:
-        out += "\n\nNote: " + "; ".join(cut) + ". Reasoning models spend output tokens thinking: raise max_output_tokens before judging them."
+        out += "\n\nNote: " + "; ".join(cut) + ". Reasoning models spend output tokens thinking: give them more room (a larger max_output_tokens) to measure them."
     return out + "\n\n" + "\n".join(f"* {n}" for n in rep["notes"])

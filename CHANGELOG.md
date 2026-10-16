@@ -11,7 +11,7 @@
   Answers from a model that qualified by shadow evidence are never used as a reference, so "close enough" steps cannot chain.
 - Server: `GET /v1/savings`, `GET/PUT /v1/shadow` (switch shadowing on or off without a restart). SDK: `ModelSpend.wait_for_shadow()`. `modelspend prune` also deletes shadow comparisons (and previously
   would have kept them when there were no old requests).
-- Found in the first live run: a reasoning model (`gpt-5-mini`) passed 1 of 27 because a 64-token output cap cut its reasoning off. The report and `shadow status` now show how many failures were cut-offs and why comparisons ended as they did (fixed reason codes). Run live once on a small sample; see docs/shadow.md.
+- Found in live runs: a reasoning model (`gpt-5-mini`) returned empty answers at a 64-token output cap. A candidate cut off at the cap is now **not counted as a pass or a fail** and is shown separately; `shadow status` lists reason codes for every comparison (including the kind of provider failure); the judge's reply is read tolerantly (a sentence around the JSON is fine); `modelspend shadow reset` forgets stale comparisons. Run live twice on a small sample; see docs/shadow.md.
 
 ## 0.6.0b2 - 2026-10-16
 

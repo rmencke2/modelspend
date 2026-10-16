@@ -9,6 +9,7 @@ modelspend shadow status                 # what has been measured so far
 modelspend savings                       # what you could save, and how sure ModelSpend is
 modelspend shadow apply                  # shows what would change; add --yes to let routing use the results
 modelspend shadow revert                 # undo
+modelspend shadow reset --yes            # forget measured comparisons (all, or --model / --category)
 ```
 
 The dashboard's **Savings** tab shows the same, with a switch for shadow evaluation.
@@ -37,7 +38,7 @@ The ceiling is checked per process: if several ModelSpend processes share one da
 
 *Passed* means **the cheaper model gave an answer as good as the one you used**, not that the answer is correct. With validators the check is against them. Without them, a candidate can agree with a wrong answer, and a judge model has its own biases. Shadow evidence therefore measures how safely a cheaper model can **stand in for the model you use today**, which is the question a routing decision asks, and it is labelled as shadow evidence everywhere it is shown. If correctness matters, give your requests validators, or measure with your own cases ([own-evals](own-evals.md)); your own eval evidence always wins over shadow evidence.
 
-A candidate that is **cut off at the output cap** you set counts as a failure (that is what routing it there would give you). This matters for **reasoning models**: they spend output tokens thinking, so with a tight `max_output_tokens` (say 64) they can return nothing at all. The first live run showed exactly that: `gpt-5-mini` passed 1 of 27 with a 64-token cap. The savings report and `modelspend shadow status` say how many failures were cut-offs and why comparisons ended as they did (fixed reason codes only), so a model is not blamed for a cap you set. Give the requests you shadow room (a larger `max_output_tokens`) before judging a reasoning model.
+A candidate that is **cut off at the output cap** on the request is **not counted as a pass or a fail**: it says how much room the request gave, not how good the model is. This matters for **reasoning models**, which spend output tokens thinking, so with a tight `max_output_tokens` (say 64) they can return nothing at all. The first live run showed exactly that: `gpt-5-mini` produced empty answers with a 64-token cap and passed 28 of 28 with 512. Cut-offs are shown separately in the savings report, and `modelspend shadow status` lists why every comparison ended as it did (fixed reason codes only, including the kind of any provider failure). Give the requests you shadow room before judging a reasoning model. After changing prompts or output limits, `modelspend shadow reset [--model ...] [--category ...] --yes` forgets stale comparisons (your spend records are kept, so the monthly cap still holds).
 
 ## The savings report
 
@@ -72,7 +73,7 @@ A typo or out-of-range value is an error, not ignored.
 
 ## First live run (2026-10-17, OpenAI, 30 ticket classifications pinned to `gpt-4.1`)
 
-`gpt-4.1-nano` passed 29 of 29 scored comparisons (1 unscored; lower bound 0.88, 95% cheaper on those requests), so the report marked classification ready. `gpt-5-mini` passed 1 of 27: the cap above. The whole run, shadow calls and judge included, cost $0.0038 against a $0.50 cap. Thirty requests of one easy task type say little about real traffic; treat it as proof that the mechanism works end to end, not as a measured saving.
+`gpt-4.1-nano` passed 29 of 29 scored comparisons (1 unscored; lower bound 0.88, 95% cheaper on those requests), so the report marked classification ready. `gpt-5-mini` produced empty answers at the 64-token cap (the cause above); re-run with 512 tokens it passed 28 of 28 new comparisons, and `gpt-4.1-nano` reached 57 of 57 (lower bound 0.94). The whole run, shadow calls and judge included, cost $0.0038 against a $0.50 cap. Thirty requests of one easy task type say little about real traffic; treat it as proof that the mechanism works end to end, not as a measured saving.
 
 ## Not verified yet
 

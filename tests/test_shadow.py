@@ -151,7 +151,8 @@ async def test_without_a_judge_differing_answers_are_unscored(catalog, cfg):
     assert store.db.execute("select count(*) from attempts where kind = 'judge'").fetchone()[0] == 0
 
 
-async def test_a_candidate_cut_off_at_the_cap_fails_as_truncated(catalog, cfg):
+async def test_a_candidate_cut_off_at_the_cap_is_not_counted_either_way(catalog, cfg):
+    """It says how much room the request gave, not how good the model is (found live: a reasoning model with a 64-token cap returned nothing)."""
     store = Store(":memory:")
 
     def script(r, n):
@@ -161,7 +162,17 @@ async def test_a_candidate_cut_off_at_the_cap_fails_as_truncated(catalog, cfg):
 
     eng = make(catalog, cfg, script, store)
     await run(eng)
-    assert {(r["verdict"], r["reason"]) for r in rows(store)} == {("fail", "truncated")}
+    assert {(r["verdict"], r["reason"]) for r in rows(store)} == {("unscored", "truncated")}
+    assert sh.counts(store, "classification") == {} and all(a["n"] == 0 and a["truncated"] == 1 for a in sh.aggregate(store))
+    # the same with validators: the 'not truncated' check is part of them, but the cause must be reported as the cut-off, not as a failed validator
+    store2 = Store(":memory:")
+
+    def labelled(r, n):  # the answer actually used must pass the validators, or there is no reference to compare against
+        return "billing" if "large" in r.model else script(r, n)
+
+    eng2 = make(catalog, cfg, labelled, store2)
+    await run(eng2, req(validators=[ValidatorSpec(type="allowed_labels", labels=["billing", "bug"])]))
+    assert {(r["verdict"], r["reason"]) for r in rows(store2)} == {("unscored", "truncated")}
 
 
 async def test_a_failing_candidate_call_is_unscored_and_the_next_one_still_runs(catalog, cfg):
@@ -169,14 +180,36 @@ async def test_a_failing_candidate_call_is_unscored_and_the_next_one_still_runs(
 
     def script(r, n):
         if "small" in r.model:
-            return ProviderError("openai", "auth", "bad key", retryable=False)
+            return ProviderError("openai", "auth", "bad key")
         return "positive"
 
     eng = make(catalog, cfg, script, store)
     res = await run(eng)
     assert res.status == "ok"
     assert {(r["cand_model"], r["verdict"], r["reason"]) for r in rows(store)} == {
-        ("synthetic-openai-small", "unscored", "provider_error"), ("synthetic-openai-mid", "pass", "exact_match")}
+        ("synthetic-openai-small", "unscored", "provider_error_auth"), ("synthetic-openai-mid", "pass", "exact_match")}  # the kind of failure, never its message
+
+
+def test_the_judge_reply_is_read_tolerantly_and_never_guessed():
+    for text, want in (('{"pass": true}', True), ('{"pass": false}', False), ('```json\n{"pass": true}\n```', True),
+                       ('Sure! Here is my verdict: {"pass": false} because it differs.', False), ('{"pass": "yes"}', None), ('{"pass": 1}', None),
+                       ("pass", None), ("", None), ("{not json}", None), ('{"verdict": true}', None)):
+        assert sh.parse_pass(text) is want, text
+
+
+def test_reset_forgets_comparisons_by_model_and_task_but_never_the_spend_ledger():
+    store = Store(":memory:")
+    fill(store, ref="openai/synthetic-openai-small", category="analysis", n=6)
+    fill(store, ref="openai/synthetic-openai-mid", category="analysis", n=4)
+    fill(store, ref="openai/synthetic-openai-small", category="classification", n=3)
+    store.db.execute("insert into requests(id, ts, project, actual_cost) values ('s1', ?, 'modelspend-shadow', 0.5)", (sh.month_start() + 10,))
+    store.db.commit()
+    assert sh.reset(store, model="openai/synthetic-openai-small", dry_run=True) == 9 and len(rows(store)) == 13
+    assert sh.reset(store, model="openai/synthetic-openai-small", category="analysis") == 6 and len(rows(store)) == 7
+    assert sh.reset(store, category="classification") == 3
+    assert sh.reset(store) == 4 and rows(store) == []
+    assert sh.reset(store) == 0
+    assert sh.spent_this_month(store, now=sh.month_start() + 20) == 0.5  # what was spent is still on the books: the cap keeps holding
 
 
 # ---- when it does NOT run ----

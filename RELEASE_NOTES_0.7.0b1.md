@@ -23,7 +23,7 @@ This release is about **finding the savings without writing a single eval case**
 
 Guide, privacy, cost and limits: [docs/shadow.md](docs/shadow.md). Try it for a few cents: `python examples/shadow_live_check.py`.
 
-**Why a failure happened** is shown, not just that it did: `modelspend shadow status` lists the reason codes per model, and the savings report calls out failures that were really **cut-offs at your `max_output_tokens`** (reasoning models need room to think) instead of blaming the model.
+**Why a comparison ended as it did** is shown: `modelspend shadow status` lists the reason codes per model (including the kind of any provider failure), and a candidate **cut off at your `max_output_tokens`** (reasoning models need room to think) is reported separately and not counted for or against it.
 
 ## Fixed
 
@@ -31,7 +31,7 @@ Guide, privacy, cost and limits: [docs/shadow.md](docs/shadow.md). Try it for a 
 
 ## Not yet verified
 
-- **Run live once, on a small sample:** 30 ticket classifications through OpenAI. `gpt-4.1-nano` passed 29 of 29 scored comparisons (lower bound 0.88, 95% cheaper on those requests) for $0.0038 of shadow spend; `gpt-5-mini` passed 1 of 27 because a 64-token output cap cut its reasoning off (the report now says so). Not yet checked: how often real judge models agree with validator and exact-match verdicts, whether the projected saving matches what happens after switching, varied real traffic, and the dashboard tab with live data (it was checked in a browser against synthetic data, in light, dark and phone width).
+- **Run live once, on a small sample:** 30 ticket classifications through OpenAI. `gpt-4.1-nano` passed 29 of 29 scored comparisons (lower bound 0.88, 95% cheaper on those requests) for $0.0038 of shadow spend; `gpt-5-mini` returned empty answers at a 64-token output cap (its reasoning used it all) and passed 28 of 28 at 512; cut-offs are now shown separately and **not counted for or against a model**, and `modelspend shadow reset` clears stale comparisons. Not yet checked: how often real judge models agree with validator and exact-match verdicts, whether the projected saving matches what happens after switching, varied real traffic, and the dashboard tab with live data (it was checked in a browser against synthetic data, in light, dark and phone width).
 - **Agreement with your current model is not correctness.** Without validators a candidate can agree with a wrong answer, and a judge model has its own biases. Use validators where correctness matters; your own eval evidence always wins over shadow evidence.
 - The monthly cap is checked per process: several processes sharing one database can exceed it together by the calls in flight. Streamed requests are not shadowed.
 - Everything listed as not yet verified in [0.6.0b1](RELEASE_NOTES_0.6.0b1.md) and [0.6.0b2](RELEASE_NOTES_0.6.0b2.md) still applies (Gemini and xAI live, cost reconciliation against a real costs export, the Docker sandbox, automatic price refresh, Windows).

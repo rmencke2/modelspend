@@ -565,6 +565,16 @@ def shadow_set(rate: Optional[float] = typer.Option(None, help="Fraction of requ
     typer.echo(_shadow_summary(_write_shadow(Config.from_env(), **changes)))
 
 
+@shadow_app.command("reset")
+def shadow_reset(model: Optional[str] = typer.Option(None, help="Only comparisons for this candidate model, as provider/model-id."),
+                 category: Optional[str] = typer.Option(None, help="Only this task type."),
+                 yes: bool = typer.Option(False, "--yes", help="Actually delete. Without it, only report what would be deleted.")):
+    """Forget measured comparisons (all, or one model and/or task type), e.g. after changing your prompts or output limits. Spend records are kept."""
+    from .shadow import reset
+    n = reset(_store(), model, category, dry_run=not yes)
+    typer.echo(f"{'deleted' if yes else 'would delete'} {n} shadow comparison(s)" + ("" if yes else "  (add --yes to delete)"))
+
+
 @shadow_app.command("apply")
 def shadow_apply(profile: str = typer.Option("balanced", help="Judge against this profile's bars (plus your own thresholds)."),
                  yes: bool = typer.Option(False, "--yes", help="Do it. Without this, only show what would change.")):
