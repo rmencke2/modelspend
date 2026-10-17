@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **First-run errors say what to run.** "No eligible model" now names the fix for the usual causes: `modelspend keys set <provider>` (no key), `modelspend catalog sync` (shipped models start as unverified until your key confirms them), and how to mark a capability you have tested. One hint per kind.
+- **README opens with install-and-try** (`pip install git+https://github.com/rmencke2/modelspend.git`, then keys, sync, serve, dashboard, `shadow on`); the contributor path (clone, test, simulated catalog) moved below it and the long honest-status block is folded into an expandable section (nothing removed).
+- **Packaging is checked on every push:** a new CI job builds the wheel, runs `twine check`, installs it into a clean environment and runs the installed commands, so a missing data file is caught before a release. Checked by hand first: the wheel ships the catalog, eval fixtures and dashboard.
+- **PyPI publishing workflow** (`.github/workflows/publish.yml`, trusted publishing, no token stored) that does nothing until you set it up; see docs/releasing.md. The name `modelspend` was free on PyPI on 2026-10-17.
+
 ## 0.7.0b1 - 2026-10-17
 
 - **Shadow evaluation (off by default, opt-in).** A sample of real requests is also tried in the background on cheaper models and compared with the answer you used: your validators, else an
