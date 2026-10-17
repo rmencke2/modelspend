@@ -178,3 +178,27 @@ def test_pricing_staleness_warning(catalog, cfg):
     cfg.exclude_stale_pricing = True
     with pytest.raises(NoEligibleModel):
         Router(catalog, cfg, today=lambda: date(2027, 6, 1)).plan(req("classify"))
+
+
+def test_a_new_users_first_errors_say_what_to_run(catalog, cfg):
+    """A stranger who just installed ModelSpend sees 'no eligible model': the message must name the command that fixes it."""
+    from modelspend import RouteRequest
+    from modelspend.errors import NoEligibleModel
+    from modelspend.routing import Router
+    for m in catalog.models:
+        m.availability = "unverified"
+    cfg.api_keys = {"openai": "k"}
+    with pytest.raises(NoEligibleModel) as e:
+        Router(catalog, cfg, available_providers={"openai"}).plan(RouteRequest(messages=[{"role": "user", "content": "Classify this"}], providers=["openai", "anthropic"]))
+    msg = str(e.value)
+    assert "modelspend catalog sync" in msg and "modelspend keys set <provider>" in msg  # unverified models, and no key for anthropic
+    assert msg.count("modelspend catalog sync") == 1  # one hint per kind, not one per excluded model
+
+
+def test_no_hints_when_nothing_actionable_was_excluded(catalog, cfg):
+    from modelspend import RouteRequest
+    from modelspend.errors import NoEligibleModel
+    from modelspend.routing import Router
+    with pytest.raises(NoEligibleModel) as e:
+        Router(catalog, cfg, available_providers={"openai"}).plan(RouteRequest(messages=[{"role": "user", "content": "x"}], providers=["openai"], allow_models=["openai/nope"]))
+    assert "modelspend catalog sync" not in str(e.value) and "modelspend keys set" not in str(e.value)

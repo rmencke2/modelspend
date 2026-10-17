@@ -1,0 +1,27 @@
+name: publish
+# Publishes to PyPI when you publish a GitHub release. It does nothing until you opt in:
+#   1. create the project on PyPI with a "trusted publisher" (see docs/releasing.md); no API token is stored anywhere
+#   2. set the repository variable PUBLISH_TO_PYPI to "true" (Settings > Secrets and variables > Actions > Variables)
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  pypi:
+    if: ${{ vars.PUBLISH_TO_PYPI == 'true' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing (OIDC): PyPI trusts this workflow, so there is no token to leak
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build --outdir dist .
+      - run: twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -331,4 +331,17 @@ class Router:
                 parts.append("Closest: " + "; ".join(f"{c.provider}/{c.model} ({c.suitability_detail})" for c in p.unsuitable[:3]) + ".")
             if p.excluded:
                 parts.append("Excluded: " + "; ".join(f"{e.provider}/{e.model} [{e.stage}: {e.reason}]" for e in p.excluded[:6]) + ".")
+                parts.extend(_hints(p.excluded))
         return " ".join(parts)
+
+
+def _hints(excluded: list[Exclusion]) -> list[str]:
+    """What to do about the exclusions a new user is most likely to hit, as the exact command (one hint per kind)."""
+    out = []
+    if any(e.stage == "provider" for e in excluded):
+        out.append("To use a provider, add its key: `modelspend keys set <provider>` (or set e.g. OPENAI_API_KEY / ANTHROPIC_API_KEY).")
+    if any(e.stage == "availability" and "unverified" in e.reason for e in excluded):
+        out.append("Shipped models start as 'unverified' until you confirm what your key can use: run `modelspend catalog sync` (needs that provider's key).")
+    if any(e.stage == "capability" and "not verified" in e.reason for e in excluded):
+        out.append("After testing a capability yourself, mark it: `modelspend catalog set <provider>/<model> capabilities.structured_output=true` (see docs/catalog-verification.md).")
+    return out

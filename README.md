@@ -7,7 +7,23 @@ Open-source cost control for LLM usage, using **your own API keys** for OpenAI, 
 
 Python SDK, CLI, a local FastAPI server with an OpenAI-compatible `/v1/chat/completions` (`model="auto"` to route, or a pinned model to just measure), route preview, a usage dashboard and an evaluation harness.
 
-> **Honest status (v0.1, MVP).**
+## Install and try it
+
+```bash
+pip install git+https://github.com/rmencke2/modelspend.git
+modelspend keys set anthropic
+modelspend catalog sync
+modelspend serve --background
+```
+
+Point any OpenAI-compatible client at `http://127.0.0.1:8787/v1` (`model="auto"` to route, or a model name to just measure), tag calls with the `X-ModelSpend-Project` / `X-ModelSpend-Agent` headers, and open the dashboard at <http://127.0.0.1:8787/dashboard>. Keys are stored only in `~/.modelspend/keys.env` (chmod 600) and the server listens on localhost only. Only Anthropic prices ship; for OpenAI, Google and xAI see [Adding another vendor](#adding-another-vendor-openai-google-xai).
+
+Then let ModelSpend find your savings, from your own requests, with no eval cases to write: `modelspend shadow on`, use your tools as normal, then `modelspend savings` ([how it works](docs/shadow.md)). Built for one developer or a small team (1 to 25 people).
+
+<details>
+<summary><b>Honest status (beta): what is and is not verified. Read this before relying on it.</b></summary>
+
+> **Honest status (beta).**
 > - ModelSpend does **not** guarantee the cheapest successful model. "Suitable" is an *estimate* from catalog tier priors and, as you run evaluations, measured evidence.
 > - **Only Anthropic pricing ships, and models are not routable until you run `modelspend catalog sync`.** The four Anthropic entries carry prices verified on 2026-10-12 against Anthropic's official pricing pages; their model IDs, availability and limits are confirmed from *your* key's live Models API by `catalog sync`. OpenAI, Google and xAI have no shipped entries (add them yourself; see below): add them with `catalog template` / `catalog set` ([docs/catalog-verification.md](docs/catalog-verification.md)).
 > - **Tokens first.** Token usage (input, cached, output, reasoning) is exact, provider-reported and summed over every attempt; it is the headline number in the CLI, API and dashboard. Cost is derived from it and shown as `unknown` for models without a price (`--allow-unpriced`). Budgets can be set in tokens (`--budget-tokens`) as well as dollars.
@@ -17,7 +33,9 @@ Python SDK, CLI, a local FastAPI server with an OpenAI-compatible `/v1/chat/comp
 > - **Aliases and conversation stickiness (0.4) were verified live on OpenAI and Anthropic** (an alias ran exactly its model; a second turn stayed on the first turn's model, and switched when stickiness was turned off) ([docs/aliases-and-stickiness.md](docs/aliases-and-stickiness.md)).
 > - **Per-project / per-agent reporting (0.2)** was checked live against Anthropic and OpenAI. **Per-agent budgets (0.3): hard refusal before the call and the soft warning were verified live on OpenAI; the dashboard Costs tab was checked on live data (the per-agent and per-model token totals add up to the headline total). The budget form and concurrent enforcement across processes are not yet verified live.** Only calls made through ModelSpend are counted ([docs/cost-attribution.md](docs/cost-attribution.md)).
 
-## Five-minute quickstart (no API keys needed)
+</details>
+
+## For contributors: clone, test, and try the simulated catalog (no API keys needed)
 
 Requires **Python 3.10+** (check with `python3 --version`; on macOS the system Python is often 3.9, so `brew install python@3.12` and use `python3.12`). Old pip (e.g. 21.x) cannot do editable installs from `pyproject.toml`, hence the upgrade. The blocks below contain no inline comments so they paste cleanly into zsh.
 

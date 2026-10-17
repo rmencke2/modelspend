@@ -27,3 +27,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t modelspend:ci .
       - run: docker run --rm modelspend:ci modelspend policy
+  package:
+    # What a stranger gets from `pip install`: the built wheel in a clean environment, not an editable checkout (which hides missing data files).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build --outdir dist .
+      - run: twine check dist/*
+      - run: python -m venv /tmp/clean && /tmp/clean/bin/pip install dist/*.whl
+      - run: cd /tmp && /tmp/clean/bin/modelspend --version && /tmp/clean/bin/modelspend catalog validate && /tmp/clean/bin/modelspend eval run --mode mock --out /tmp/report.md
+      - run: cd /tmp && /tmp/clean/bin/python -c "import importlib.resources as r, modelspend; p = r.files('modelspend'); assert (p / 'server' / 'dashboard.html').is_file() and (p / 'catalog' / 'data' / 'catalog.json').is_file() and (p / 'eval' / 'fixtures' / 'calibration').is_dir(), 'package data missing from the wheel'"
