@@ -52,6 +52,12 @@ The saving is a **projection**: your recorded spend in that task type (excluding
 
 **No chaining.** If routing chose a model because of shadow evidence, answers from that model are not used as the reference for further comparisons; otherwise "A is close to B", "B is close to C" could chain and quality could erode with nothing anchoring it. The consequence: once a task type is served by a shadow-chosen model, its evidence stops growing. Re-measure with your own cases, or pin the reference model for a while, to refresh it.
 
+## With a few people
+
+For a small team, run **one** ModelSpend server and let everyone use it: `MODELSPEND_API_TOKEN=... modelspend serve --host 0.0.0.0` (a non-loopback bind is refused without a token). Everyone points an OpenAI-compatible client at it and tags requests with `X-ModelSpend-Project` and `X-ModelSpend-Agent`. Spend, budgets and shadow evidence are shared, and evidence builds faster because it pools everyone's requests (5% of a team's traffic reaches a meaningful sample in days, not weeks). Keep it to one server process: the monthly cap is checked per process.
+
+Today that is **one shared token** with no per-person identity or roles, so anyone with the token can change settings, including `shadow apply`. That is fine for a few people who trust each other. Shadowing sends sampled prompts to the other providers you allow, so check that your team's data rules permit that before turning it on, and use `include_sensitive: false` (the default) for anything sensitive.
+
 ## Settings (`settings.json`, key `shadow`)
 
 | key | default | meaning |
