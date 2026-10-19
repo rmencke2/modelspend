@@ -338,6 +338,9 @@ def _hints(excluded: list[Exclusion]) -> list[str]:
         out.append("To use a provider, add its key: `modelspend keys set <provider>` (or set e.g. OPENAI_API_KEY / ANTHROPIC_API_KEY).")
     if any(e.stage == "availability" and "unverified" in e.reason for e in excluded):
         out.append("Shipped models start as 'unverified' until you confirm what your key can use: run `modelspend catalog sync` (needs that provider's key).")
+    if any(e.stage == "limits" for e in excluded):
+        out.append("A provider's model list does not say how long a model's context or output can be. Set them from the provider's docs, with a tier (your own prior: "
+                   "1 small and cheap, 3 strongest): `modelspend catalog set <provider>/<model> tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>`.")
     if any(e.stage == "capability" and "not verified" in e.reason for e in excluded):
         out.append("After testing a capability yourself, mark it: `modelspend catalog set <provider>/<model> capabilities.structured_output=true` (see docs/catalog-verification.md).")
     return out

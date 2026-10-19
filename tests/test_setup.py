@@ -325,3 +325,24 @@ def test_sync_exact_and_snapshot_filtering(monkeypatch):
     exact = run("--only", "gpt-5-mini,gpt-4.1", "--exact").output
     assert "gpt-5-mini" in exact and "gpt-4.1 " in exact.replace("gpt-4.1  ", "gpt-4.1 ") and "gpt-5-pro" not in exact and "gpt-4.1-mini" not in exact
     assert "gpt-5-mini-2025-08-07" in run("--only", "gpt-5-mini", "--snapshots").output
+
+
+def test_sync_says_which_added_models_still_need_limits_and_a_tier(monkeypatch):
+    _fake_listing(monkeypatch, "openai", {"gpt-test-1": {}, "gpt-test-2": {"context_tokens": 128000, "max_output_tokens": 4096, "line": "haiku"}})
+    r = runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--only", "gpt-test", "--write"])
+    assert r.exit_code == 0 and "stay unroutable until you set them" in r.output
+    assert "modelspend catalog set openai/gpt-test-1 tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>" in r.output
+    assert "catalog set openai/gpt-test-2" not in r.output  # that one arrived with limits and a suggested tier
+
+
+def test_the_refusal_for_unknown_limits_names_the_command_that_fixes_it(catalog, cfg):
+    from modelspend import RouteRequest
+    from modelspend.errors import NoEligibleModel
+    from modelspend.routing import Router
+    m = catalog.get("openai/synthetic-openai-small")
+    m.limits.context_tokens = None
+    cfg.api_keys = {"openai": "k"}
+    with pytest.raises(NoEligibleModel) as e:
+        Router(catalog, cfg, available_providers={"openai"}).plan(RouteRequest(
+            messages=[{"role": "user", "content": "Classify this"}], providers=["openai"], allow_models=["openai/synthetic-openai-small"]))
+    assert "modelspend catalog set <provider>/<model> tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>" in str(e.value)
