@@ -1,6 +1,6 @@
 # ModelSpend
 
-Open-source cost control for LLM usage, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini) and xAI (Grok). Two halves that work together:
+Open-source cost control for LLM usage, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, and any other OpenAI-compatible endpoint you describe ([more providers](docs/providers.md); only the first four and DeepSeek are built in, and the extra ones are not yet run against live APIs). Two halves that work together:
 
 1. **Know where the money goes.** Tag calls with a project and an agent, and see **tokens and cost per project, per agent, per model** (including what retries and escalations cost). Works even if you do not want routing: pin a model and ModelSpend only measures. See [docs/cost-attribution.md](docs/cost-attribution.md).
 2. **Spend less.** Route each task to **the lowest-cost model expected to suit it**, inside a token and dollar budget that covers every retry and escalation.
@@ -16,7 +16,7 @@ modelspend catalog sync
 modelspend serve --background
 ```
 
-Point any OpenAI-compatible client at `http://127.0.0.1:8787/v1` (`model="auto"` to route, or a model name to just measure), tag calls with the `X-ModelSpend-Project` / `X-ModelSpend-Agent` headers, and open the dashboard at <http://127.0.0.1:8787/dashboard>. Keys are stored only in `~/.modelspend/keys.env` (chmod 600) and the server listens on localhost only. Only Anthropic prices ship; for OpenAI, Google and xAI see [Adding another vendor](#adding-another-vendor-openai-google-xai).
+Point any OpenAI-compatible client at `http://127.0.0.1:8787/v1` (`model="auto"` to route, or a model name to just measure), tag calls with the `X-ModelSpend-Project` / `X-ModelSpend-Agent` headers, and open the dashboard at <http://127.0.0.1:8787/dashboard>. Keys are stored only in `~/.modelspend/keys.env` (chmod 600) and the server listens on localhost only. Only Anthropic prices ship; for OpenAI, Google and xAI see [Adding another vendor](#adding-another-vendor-openai-google-xai), and for DeepSeek or any OpenAI-compatible provider see [docs/providers.md](docs/providers.md).
 
 Then let ModelSpend find your savings, from your own requests, with no eval cases to write: `modelspend shadow on`, use your tools as normal, then `modelspend savings` ([how it works](docs/shadow.md)). Built for one developer or a small team (1 to 25 people).
 
@@ -258,7 +258,7 @@ hard constraints (allowlisted provider with a key, availability, known fresh-eno
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Reconciling with provider usage](docs/reconcile.md) · [Shadow evaluation and savings](docs/shadow.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Releasing to PyPI](docs/releasing.md) · [Contributing](CONTRIBUTING.md)
+[Architecture](docs/architecture.md) · [Routing policy](docs/routing-policy.md) · [Validation & escalation](docs/validation-and-escalation.md) · [Catalog verification](docs/catalog-verification.md) · [Cost per project and agent](docs/cost-attribution.md) · [Reconciling with provider usage](docs/reconcile.md) · [Shadow evaluation and savings](docs/shadow.md) · [More providers](docs/providers.md) · [Aliases and stickiness](docs/aliases-and-stickiness.md) · [Your own evals](docs/own-evals.md) · [Roadmap](docs/roadmap-cost-attribution.md) · [Keeping prices current](docs/pricing-refresh.md) · [OpenAI compatibility](docs/openai-compat.md) · [Evaluation](docs/evaluation.md) · [Limitations & roadmap](docs/limitations.md) · [Alternatives](docs/alternatives.md) · [Releasing to PyPI](docs/releasing.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 

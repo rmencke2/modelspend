@@ -27,6 +27,15 @@ def _hermetic_env(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _provider_registry_is_per_test():
+    """User-defined providers live in process-wide state (registry.py); no test may leak them into the next."""
+    from modelspend import registry
+    registry.register_custom({})
+    yield
+    registry.register_custom({})
+
+
 @pytest.fixture
 def catalog():
     return Catalog.load(shipped_catalog_path("synthetic_test_catalog.json"))

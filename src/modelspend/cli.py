@@ -11,10 +11,10 @@ from typing import Optional
 
 import typer
 
-from . import POLICY_VERSION
+from . import POLICY_VERSION, registry
 from .catalog import Catalog, shipped_catalog_path, write_evidence
 from .config import (
-    KEY_ENV, Config, keys_path, load_settings, parse_env_file, read_keys_file, save_settings, settings_path, write_keys_file,
+    Config, keys_path, load_settings, parse_env_file, read_keys_file, save_settings, settings_path, write_keys_file,
 )
 from .engine import Engine
 from .errors import ModelSpendError
@@ -631,7 +631,7 @@ def savings(since: str = typer.Option("30d", help="Window for your spend: 7d, 24
 
 @reconcile_app.command("import")
 def reconcile_import(file: Path = typer.Argument(..., help="Usage export from the provider: CSV, JSON or JSON lines."),
-                     provider: Optional[str] = typer.Option(None, help="openai, anthropic, google or xai (or put a 'provider' column in the file)."),
+                     provider: Optional[str] = typer.Option(None, help="openai, anthropic, google, xai, deepseek or one you defined (or put a 'provider' column in the file)."),
                      source: Optional[str] = typer.Option(None, help="Name for this import (default: the file name). Importing the same name again replaces it."),
                      map_: Optional[list[str]] = typer.Option(None, "--map", help="Column mapping field=column, e.g. --map day=Date --map cost=Amount. Fields: day, model, input_tokens, output_tokens, cache_read, cache_write, requests, cost.")):
     """Read a provider usage export into ModelSpend's database (numbers only; no text from the file is stored)."""
@@ -664,7 +664,7 @@ def reconcile_run(by_day: bool = typer.Option(False, "--by-day", help="One row p
                   exclusive: bool = typer.Option(False, "--exclusive", help="The exported key/project is used only by ModelSpend: flag provider-higher differences too."),
                   source: Optional[str] = typer.Option(None, help="Only this import."), provider: Optional[str] = None,
                   cached_separate: Optional[list[str]] = typer.Option(None, help="Provider whose input-token column excludes cached tokens (default: anthropic only). Repeatable."),
-                  cached_included: Optional[list[str]] = typer.Option(None, help="Provider whose input-token column includes cached tokens (default: openai, google, xai). Repeatable."),
+                  cached_included: Optional[list[str]] = typer.Option(None, help="Provider whose input-token column includes cached tokens (default: every provider except anthropic). Repeatable."),
                   fmt: str = typer.Option("table", "--format", help="table, csv or json."),
                   check: bool = typer.Option(False, "--check", help="Exit with status 1 when any row needs a look (for cron/CI).")):
     """Compare ModelSpend's tokens and cost with the provider's, per model, over the days the export covers."""
@@ -1143,20 +1143,20 @@ def keys_set(provider: str, key: Optional[str] = typer.Option(None, "--key", hel
         typer.echo("empty key; nothing saved", err=True)
         raise typer.Exit(2)
     data = read_keys_file(cfg.home)
-    data[KEY_ENV[prov][0]] = key
+    data[registry.key_env()[prov][0]] = key
     p = write_keys_file(cfg.home, data)
     typer.echo(f"saved {prov} key to {p} (readable only by you). Next: modelspend keys test {prov}")
     if cfg.key_sources.get(prov) == "environment":
-        typer.echo(f"note: {KEY_ENV[prov][0]} is set in your environment and takes precedence over the saved key.")
+        typer.echo(f"note: {registry.key_env()[prov][0]} is set in your environment and takes precedence over the saved key.")
 
 
 @keys_app.command("list")
 def keys_list():
     """Which providers have a key, and where it comes from. Keys are never printed."""
     cfg = Config.from_env()
-    for p in PROVIDERS_ORDER:
+    for p in registry.all_providers():
         src = cfg.key_sources.get(p)
-        typer.echo(f"{p:<10}{'set (' + src + ')' if src else 'not set':<26}env var: {' or '.join(KEY_ENV[p])}")
+        typer.echo(f"{p:<10}{'set (' + src + ')' if src else 'not set':<26}env var: {' or '.join(registry.key_env()[p])}")
     typer.echo(f"\nkeys file: {keys_path(cfg.home)} ({'exists' if keys_path(cfg.home).exists() else 'not created yet'})")
 
 
@@ -1166,7 +1166,7 @@ def keys_remove(provider: str):
     prov = _prov(provider)
     cfg = Config.from_env()
     data = read_keys_file(cfg.home)
-    gone = [n for n in KEY_ENV[prov] if data.pop(n, None) is not None]
+    gone = [n for n in registry.key_env()[prov] if data.pop(n, None) is not None]
     write_keys_file(cfg.home, data)
     typer.echo(f"removed {prov} key from the keys file" if gone else f"no {prov} key in the keys file")
 
@@ -1199,7 +1199,6 @@ def keys_test(provider: Optional[str] = typer.Argument(None)):
     raise typer.Exit(1 if bad else 0)
 
 
-PROVIDERS_ORDER = ("anthropic", "openai", "google", "xai")
 
 
 # ---------------------------------------------------------------- providers / models / status
@@ -1236,7 +1235,7 @@ def providers_list(catalog: Optional[str] = CAT):
     cfg = Config.from_env()
     cat = _catalog(cfg, catalog)
     typer.echo(f"{'provider':<11}{'key':<8}{'enabled':<13}{'models':>7}{'routable':>10}")
-    for p in PROVIDERS_ORDER:
+    for p in registry.all_providers():
         ms = [m for m in cat.models if m.provider == p]
         ok = [m for m in ms if not routability(m, cfg)]
         enabled = ("yes" if p in cfg.default_providers else "no") if cfg.default_providers else "per request"
@@ -1323,7 +1322,7 @@ def status(catalog: Optional[str] = CAT):
     if not routable:
         typer.echo("  none yet. Typical fixes: modelspend keys set <provider>; modelspend catalog sync --provider <provider> --write")
     typer.echo("\npricing sources (change with `modelspend sources set <provider> <url>`):")
-    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: PROVIDERS_ORDER.index(kv[0])):
+    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: registry.all_providers().index(kv[0])):
         typer.echo(f"  {p:<10}{s.pricing_url}  [{s.origin}]")
 
 
@@ -1332,7 +1331,7 @@ def status(catalog: Optional[str] = CAT):
 def sources_list():
     cfg = Config.from_env()
     snaps = load_snapshots(cfg)
-    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: PROVIDERS_ORDER.index(kv[0])):
+    for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: registry.all_providers().index(kv[0])):
         snap = snaps.get(p)
         base = f"baseline accepted {snap['accepted_on']}" if snap and snap.get("url") == s.pricing_url else "no baseline"
         typer.echo(f"{p:<10}{s.pricing_url}\n          origin: {s.origin} | {base}")
@@ -1365,7 +1364,7 @@ def sources_check(provider: Optional[str] = typer.Argument(None),
     """Fetch each pricing page and say whether it CHANGED since your last accepted baseline. Never edits prices."""
     cfg = Config.from_env()
     srcs = resolve_sources(cfg)
-    targets = [srcs[_prov(provider)]] if provider else [srcs[p] for p in PROVIDERS_ORDER if p in srcs]
+    targets = [srcs[_prov(provider)]] if provider else [srcs[p] for p in registry.all_providers() if p in srcs]
     changed = 0
     for s in targets:
         r = check_source(cfg, s, accept=accept)
@@ -1418,7 +1417,7 @@ def pricing_refresh(provider: Optional[str] = typer.Argument(None, help="One pro
     Exit code 0 = nothing to review, 10 = proposals pending review, 1 = an error occurred. Safe to run from cron."""
     cfg = Config.from_env()
     eng = _pricing_engine(cfg, catalog)
-    targets = [_prov(provider)] if provider else list(PROVIDERS_ORDER)
+    targets = [_prov(provider)] if provider else list(registry.all_providers())
     results = asyncio.run(_refresh_many(cfg, eng, targets, force=force, auto_apply=auto_apply, max_change_pct=max_change_pct,
                                         providers=[p.strip() for p in providers.split(",")] if providers else None,
                                         max_tokens=max_tokens, extractor_model=extractor_model))

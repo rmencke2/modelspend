@@ -31,7 +31,7 @@ def api(rig, monkeypatch):
 
 def test_sources_get_put_reset_and_ssrf_guard(api):
     j = api.get("/v1/sources").json()["providers"]
-    assert [p["provider"] for p in j] == ["anthropic", "openai", "google", "xai"] and j[0]["origin"] == "shipped"
+    assert [p["provider"] for p in j] == ["anthropic", "openai", "google", "xai", "deepseek"] and j[0]["origin"] == "shipped"
     r = api.put("/v1/sources/openai", json={"url": "https://example.test/pricing?utm_source=chatgpt.com"}, headers=H)
     row = {p["provider"]: p for p in r.json()["providers"]}["openai"]
     assert r.status_code == 200 and row["pricing_url"] == "https://example.test/pricing" and row["origin"] == "user"

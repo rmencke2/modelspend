@@ -13,6 +13,7 @@ from typing import Callable
 from .catalog import Catalog, pricing_age_days
 from .catalog.models import Model
 from .config import Config
+from . import registry
 from .errors import (
     BudgetTooLow, InvalidRequest, NoEligibleModel, ProviderAllowlistRequired, ValidationRequired,
 )
@@ -24,22 +25,17 @@ from .types import (
     Candidate, Exclusion, Message, Plan, RouteRequest, TaskCategory, TaskInfo, Usage,
 )
 
-# Provider-option allowlists: only these namespaced keys may be forwarded, per provider.
-ALLOWED_PROVIDER_OPTIONS: dict[str, set[str]] = {
-    "openai": {"reasoning_effort", "seed", "top_p", "frequency_penalty", "presence_penalty", "stop", "user"},
-    "xai": {"reasoning_effort", "seed", "top_p", "frequency_penalty", "presence_penalty", "stop", "user"},
-    "anthropic": {"top_p", "top_k", "stop_sequences"},
-    "google": {"top_p", "top_k", "seed", "stop_sequences", "presence_penalty", "frequency_penalty"},
-}
+# Provider-option allowlists: only these namespaced keys may be forwarded, per provider (from the provider registry).
 
 
 def validate_provider_options(req: RouteRequest) -> None:
     for prov, opts in req.provider_options.items():
-        bad = set(opts) - ALLOWED_PROVIDER_OPTIONS[prov]
+        allowed = registry.spec(prov).options
+        bad = set(opts) - allowed
         if bad:
             raise InvalidRequest(
                 f"provider_options['{prov}'] has unsupported key(s) {sorted(bad)}; "
-                f"allowed: {sorted(ALLOWED_PROVIDER_OPTIONS[prov])}"
+                f"allowed: {sorted(allowed)}"
             )
 
 

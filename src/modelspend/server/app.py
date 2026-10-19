@@ -466,7 +466,7 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
             snap = snaps.get(p)
             out.append({"provider": p, "pricing_url": s.pricing_url, "origin": s.origin,
                         "baseline_accepted_on": snap["accepted_on"] if snap and snap.get("url") == s.pricing_url else None})
-        return {"providers": sorted(out, key=lambda x: ("anthropic", "openai", "google", "xai").index(x["provider"]))}
+        return {"providers": sorted(out, key=lambda x: __import__("modelspend.registry", fromlist=["x"]).all_providers().index(x["provider"]))}
 
     def _provider(name: str) -> str:
         from ..types import normalize_provider

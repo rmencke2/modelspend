@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .config import Config
-from .types import PROVIDERS
+from . import registry
 
 
 @dataclass
@@ -89,7 +89,11 @@ def assert_public_url(url: str) -> None:
 
 def shipped_sources() -> dict[str, str]:
     raw = json.loads(Path(str(resources.files("modelspend.catalog").joinpath("data", "sources.json"))).read_text())
-    return {p: raw[p]["pricing_url"] for p in PROVIDERS if p in raw}
+    out = {p: raw[p]["pricing_url"] for p in registry.BUILTIN if p in raw}
+    for name, sp in registry.all_specs().items():  # presets and your own providers may carry a pricing page of their own
+        if name not in out and sp.pricing_url:
+            out[name] = sp.pricing_url
+    return out
 
 
 def user_sources_path(cfg: Config) -> Path:
@@ -98,7 +102,7 @@ def user_sources_path(cfg: Config) -> Path:
 
 def load_user_sources(cfg: Config) -> dict[str, str]:
     p = user_sources_path(cfg)
-    return {k: v for k, v in json.loads(p.read_text()).items() if k in PROVIDERS} if p.exists() else {}
+    return {k: v for k, v in json.loads(p.read_text()).items() if k in registry.all_providers()} if p.exists() else {}
 
 
 def resolve_sources(cfg: Config | None = None, env: dict[str, str] | None = None) -> dict[str, Source]:
@@ -107,7 +111,7 @@ def resolve_sources(cfg: Config | None = None, env: dict[str, str] | None = None
     shipped = shipped_sources()
     user = load_user_sources(cfg) if cfg is not None else {}
     out: dict[str, Source] = {}
-    for p in PROVIDERS:
+    for p in registry.all_providers():
         e = env.get(f"MODELSPEND_PRICING_URL_{p.upper()}")
         if e:
             out[p] = Source(p, clean_url(e), "env")

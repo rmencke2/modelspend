@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1200">
+<title>ModelSpend launch card</title>
+<style>
+:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#6f6d68;--hair:rgba(11,11,11,.12);--s1:#2a78d6;--s2:#1baf7a;--panel:#f4f3ef}
+*{box-sizing:border-box;margin:0}
+html,body{width:1200px;height:1200px;background:var(--surface);color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.card{width:1200px;height:1200px;padding:76px 84px 64px;display:flex;flex-direction:column}
+.top{display:flex;justify-content:space-between;align-items:baseline;font-size:26px}
+.top b{font-weight:700;letter-spacing:-.01em;font-size:30px}.top span{color:var(--muted)}
+h1{font-size:70px;line-height:1.06;letter-spacing:-.025em;font-weight:700;margin-top:40px;max-width:1010px}
+.sub{font-size:30px;line-height:1.35;color:var(--ink2);margin-top:20px;max-width:960px}
+.panel{background:var(--panel);border:1px solid var(--hair);border-radius:18px;padding:28px 44px 28px;margin-top:34px;margin-bottom:30px}
+.kicker{font-size:23px;color:var(--ink2)}
+.hero{display:flex;align-items:baseline;gap:22px;margin-top:6px}
+.hero .n{font-size:148px;line-height:1;font-weight:800;letter-spacing:-.04em}
+.hero .l{font-size:34px;font-weight:600;color:var(--ink)}
+.barlabel{display:flex;justify-content:space-between;font-size:24px;color:var(--ink2);margin:18px 0 10px}
+.bar{display:flex;gap:2px;height:46px}
+.bar i{display:block;height:100%}
+.bar .keep{background:var(--s1);flex:0 0 52px;border-radius:4px 0 0 4px}
+.bar .save{background:var(--s2);flex:1 1 auto;border-radius:0 4px 4px 0}
+.legend{display:flex;justify-content:space-between;margin-top:14px;font-size:25px}
+.legend div{display:flex;align-items:center;gap:12px}.legend em{font-style:normal;color:var(--ink2)}.legend b{font-weight:700;font-variant-numeric:tabular-nums}
+.k{display:inline-block;width:18px;height:18px;border-radius:4px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:24px}
+.stat{border-top:2px solid var(--hair);padding-top:14px}
+.stat b{display:block;font-size:46px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.stat span{font-size:22px;color:var(--ink2)}
+.foot{margin-top:auto;font-size:21px;line-height:1.4;color:var(--muted)}
+.foot p+p{margin-top:8px}.foot b{color:var(--ink2);font-weight:600}
+</style></head><body>
+<div class="card">
+  <div class="top"><b>ModelSpend</b><span>Open source · Apache-2.0</span></div>
+  <h1>Which cheaper model is safe for your traffic?</h1>
+  <p class="sub">It tries a sample of your real requests on cheaper models in the background, and shows you the evidence.</p>
+  <section class="panel" aria-label="Ticket classification: spend now and projected saving">
+    <div class="kicker">Support-ticket classification: gpt-4.1 vs gpt-4.1-nano, a live test on OpenAI</div>
+    <div class="hero"><span class="n">95%</span><span class="l">projected saving</span></div>
+    <div class="barlabel"><span>Spend now: gpt-4.1</span><b style="color:var(--ink);font-weight:700">$0.0045</b></div>
+    <div class="bar" role="img" aria-label="Spend now $0.0045: would still cost $0.0002, projected saving $0.0043"><i class="keep"></i><i class="save"></i></div>
+    <div class="legend"><div><span class="k" style="background:var(--s1)"></span><em>Would still cost</em> <b>$0.0002</b></div><div><span class="k" style="background:var(--s2)"></span><em>Projected saving</em> <b>$0.0043</b></div></div>
+    <div class="stats">
+      <div class="stat"><b>57 of 57</b><span>scored comparisons passed</span></div>
+      <div class="stat"><b>0.94</b><span>95% lower bound on the pass rate</span></div>
+      <div class="stat"><b>$0.0073</b><span>total spent on the testing</span></div>
+    </div>
+  </section>
+  <div class="foot">
+    <p><b>A small test:</b> 30 easy ticket classifications, run twice. It shows the mechanism works, not what your bill will do. “Passed” means as good as the answer you used, not correct.</p>
+    <p>Source: my live run, 17 Oct 2026, ModelSpend 0.7.0b1 · github.com/rmencke2/modelspend</p>
+  </div>
+</div>
+</body></html>

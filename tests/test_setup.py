@@ -124,9 +124,9 @@ def test_clean_url_strips_tracking_and_validates():
             clean_url(bad)
 
 
-def test_shipped_sources_cover_all_four_providers_with_clean_urls():
+def test_shipped_sources_cover_every_known_provider_with_clean_urls():
     s = resolve_sources(Config.from_env(), env={})
-    assert set(s) == {"anthropic", "openai", "google", "xai"} and all("utm_" not in x.pricing_url and x.origin == "shipped" for x in s.values())
+    assert set(s) == {"anthropic", "openai", "google", "xai", "deepseek"} and all("utm_" not in x.pricing_url and x.origin == "shipped" for x in s.values())
     assert s["xai"].pricing_url == "https://docs.x.ai/developers/pricing"
 
 
@@ -188,7 +188,7 @@ def test_cli_sources_check_exit_code_signals_change(monkeypatch):
 
 def test_providers_list_does_not_claim_enabled_when_no_default_allowlist():
     out = runner.invoke(app, ["providers", "list"]).output
-    assert out.count("per request") == 4
+    assert out.count("per request") == 5  # the four built-ins and the DeepSeek preset
     assert "per request" in out
     runner.invoke(app, ["providers", "enable", "anthropic"])
     rows = {l.split()[0]: l.split() for l in runner.invoke(app, ["providers", "list"]).output.splitlines()[1:5]}
@@ -198,7 +198,7 @@ def test_providers_list_does_not_claim_enabled_when_no_default_allowlist():
 def test_sources_listed_in_the_same_order_as_providers():
     out = runner.invoke(app, ["sources", "list"]).output
     order = [l.split()[0] for l in out.splitlines() if l and not l.startswith(" ")]
-    assert order == ["anthropic", "openai", "google", "xai"]
+    assert order == ["anthropic", "openai", "google", "xai", "deepseek"]
 
 
 # ---------------------------------------------------------------- adding a new vendor's models

@@ -8,18 +8,14 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import registry
 from .errors import UnsupportedInput
 
-PROVIDERS = ("openai", "anthropic", "google", "xai")
-_ALIASES = {"gemini": "google", "claude": "anthropic", "grok": "xai"}
+PROVIDERS = registry.BUILTIN  # the built-in four, kept for compatibility; registry.all_providers() lists every provider (presets and your own too)
 
 
 def normalize_provider(name: str) -> str:
-    n = name.strip().lower()
-    n = _ALIASES.get(n, n)
-    if n not in PROVIDERS:
-        raise ValueError(f"unknown provider '{name}'; supported: {', '.join(PROVIDERS)}")
-    return n
+    return registry.normalize(name)
 
 
 class TaskCategory(str, Enum):

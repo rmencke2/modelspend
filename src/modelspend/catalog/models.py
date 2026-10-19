@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..types import PROVIDERS
+from .. import registry
 
 
 class PriceTier(BaseModel):
@@ -110,5 +110,5 @@ class CatalogFile(BaseModel):
 
     def validate_providers(self) -> None:
         for m in self.models:
-            if m.provider not in PROVIDERS:
+            if m.provider not in registry.all_providers():
                 raise ValueError(f"{m.ref}: unknown provider")

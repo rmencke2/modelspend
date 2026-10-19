@@ -21,13 +21,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import registry
 from .store import Store
 
 MAX_BYTES = 50 * 1024 * 1024
 MAX_ROWS = 500_000
-PROVIDERS = ("anthropic", "openai", "google", "xai")
-# Providers differ on whether the input-token number already contains cached tokens.
-CACHED_INCLUDED = {"openai": True, "google": True, "xai": True, "anthropic": False}
+# Providers differ on whether the input-token number already contains cached tokens (from the provider registry, so DeepSeek and your own are covered).
 
 _ALIASES: dict[str, tuple[str, ...]] = {
     "day": ("day", "date", "usage_date", "start_date", "start_time", "starting_at", "bucket_start", "timestamp", "time"),
@@ -126,8 +125,8 @@ def _read_rows(text: str, name: str) -> list[dict[str, Any]]:
 
 def parse_usage(text: str, provider: str | None, name: str = "file", mapping: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Rows of provider usage -> [{provider, model, day, input_tokens, output_tokens, cache_read, cache_write, requests, cost}], summed per (provider, model, day)."""
-    if provider is not None and provider not in PROVIDERS:
-        raise ReconcileError(f"unknown provider {provider!r}; choose from {', '.join(PROVIDERS)}")
+    if provider is not None and provider not in registry.all_providers():
+        raise ReconcileError(f"unknown provider {provider!r}; choose from {', '.join(registry.all_providers())}")
     raw = _read_rows(text, name)
     if len(raw) > MAX_ROWS:
         raise ReconcileError(f"too many rows ({len(raw):,}; the limit is {MAX_ROWS:,})")
@@ -159,7 +158,7 @@ def parse_usage(text: str, provider: str | None, name: str = "file", mapping: di
     for n, r in enumerate(raw, 1):
         try:
             p = (str(r.get(c["provider"]) or "").strip().lower() if c["provider"] else "") or provider
-            if p not in PROVIDERS:
+            if p not in registry.all_providers():
                 raise ReconcileError(f"unknown provider {p!r}")
             model = str(r.get(c["model"]) or "").strip()
             row = {f: _num(r.get(c[f]), f != "cost") if c[f] else None
@@ -262,7 +261,7 @@ def compare(store: Store, *, by_day: bool = False, tolerance: float = 0.02, excl
             provider: str | None = None, cached_included: dict[str, bool] | None = None) -> dict[str, Any]:
     if not 0 <= tolerance <= 1:
         raise ReconcileError("tolerance must be between 0 and 1 (0.02 = 2%)")
-    incl = {**CACHED_INCLUDED, **(cached_included or {})}
+    incl = {**{n: s.cached_included for n, s in registry.all_specs().items()}, **(cached_included or {})}
     where, params = ["1=1"], []
     if source:
         where.append("source = ?")

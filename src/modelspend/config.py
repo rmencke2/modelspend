@@ -7,14 +7,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .types import PROVIDERS, normalize_provider
-
-KEY_ENV = {
-    "openai": ("OPENAI_API_KEY",),
-    "anthropic": ("ANTHROPIC_API_KEY",),
-    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "xai": ("XAI_API_KEY",),
-}
+from . import registry
+from .types import normalize_provider
 
 
 def parse_env_file(path: str | Path) -> dict[str, str]:
@@ -186,6 +180,7 @@ class Config:
     aliases: dict[str, str] = field(default_factory=dict)  # name -> 'provider/model-id' (see aliases.py); a pinned, unrouted model
     thresholds: dict = field(default_factory=dict)  # user-defined evidence bars per task category (see policy.Threshold); from settings.json
     shadow: ShadowSettings = field(default_factory=ShadowSettings)  # background comparison of cheaper models on real requests (shadow.py)
+    custom_providers: dict = field(default_factory=dict)  # your own OpenAI-compatible providers (settings.json "custom_providers"; see registry.py)
     sticky: bool = True  # keep the model chosen for earlier turns of a conversation (MODELSPEND_STICKY=false to turn off)
     default_project: str | None = None  # attribution defaults (MODELSPEND_PROJECT / MODELSPEND_AGENT)
     default_agent: str | None = None
@@ -203,6 +198,7 @@ class Config:
 
     def __post_init__(self) -> None:
         from . import redact
+        registry.register_custom(registry.parse_custom(self.custom_providers))  # so normalize_provider() knows them
         redact.register(*self.api_keys.values(), self.api_token)
         self.home = Path(self.home)
         if self.db_path is None:
@@ -218,9 +214,11 @@ class Config:
         home = default_home(e)
         filekeys = read_keys_file(home)
         settings = load_settings(home)
+        custom = settings.get("custom_providers") or {}
+        registry.register_custom(registry.parse_custom(custom))  # invalid settings raise here, before any key is read
         keys: dict[str, str] = {}
         key_sources: dict[str, str] = {}
-        for prov, names in KEY_ENV.items():
+        for prov, names in registry.key_env().items():
             for n in names:  # real environment wins over the keys file
                 if e.get(n):
                     keys[prov], key_sources[prov] = e[n], "environment"
@@ -230,6 +228,9 @@ class Config:
                     if filekeys.get(n):
                         keys[prov], key_sources[prov] = filekeys[n], "keys file"
                         break
+        for name, sp in registry.all_specs().items():
+            if not sp.needs_key and name not in keys:  # a local server that takes no key (Ollama, vLLM): the SDK still wants a non-empty string
+                keys[name], key_sources[name] = "no-key-required", "not required"
         if "MODELSPEND_PROVIDERS" in e:
             provs = [normalize_provider(p) for p in e["MODELSPEND_PROVIDERS"].split(",") if p.strip()]
         else:
@@ -250,6 +251,7 @@ class Config:
             key_sources=key_sources,
             aliases={str(k): str(v) for k, v in (settings.get("aliases") or {}).items()},
             thresholds=_load_thresholds(settings),
+            custom_providers=dict(custom),
             shadow=parse_shadow(settings.get("shadow"), e.get("MODELSPEND_SHADOW")),
             sticky=_bool(e.get("MODELSPEND_STICKY"), bool(settings.get("sticky_conversations", True))),
             allow_models=list(settings.get("allow_models", [])),
@@ -270,7 +272,7 @@ class Config:
         )
 
     def configured_providers(self) -> list[str]:
-        return [p for p in PROVIDERS if p in self.api_keys]
+        return [p for p in registry.all_providers() if p in self.api_keys]
 
 
 def is_loopback(host: str) -> bool:

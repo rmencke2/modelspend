@@ -28,7 +28,7 @@ def normalize_usage(u: Any, reasoning_in_output: bool) -> Usage:
         return Usage()
     prompt = _g(u, "prompt_tokens", 0) or 0
     completion = _g(u, "completion_tokens", 0) or 0
-    cached = _g(_g(u, "prompt_tokens_details"), "cached_tokens", 0) or 0
+    cached = _g(_g(u, "prompt_tokens_details"), "cached_tokens", 0) or _g(u, "prompt_cache_hit_tokens", 0) or 0  # DeepSeek reports hits as prompt_cache_hit_tokens
     reasoning = _g(_g(u, "completion_tokens_details"), "reasoning_tokens", 0) or 0
     # prompt_tokens includes cached tokens; split them so each is billed once.
     out = completion if reasoning_in_output else completion + reasoning
@@ -150,3 +150,10 @@ class OpenAICompatAdapter(ProviderAdapter):
 class XAIAdapter(OpenAICompatAdapter):
     name = "xai"
     base_url = "https://api.x.ai/v1"
+
+
+def make_compat_adapter(spec, api_key: str, client: Any = None) -> OpenAICompatAdapter:
+    """An adapter for any OpenAI-compatible provider described by a registry spec (a preset like DeepSeek, or one of your own)."""
+    cls = type(f"{spec.name.title().replace('-', '').replace('_', '')}Adapter", (OpenAICompatAdapter,),
+               {"name": spec.name, "base_url": spec.base_url, "max_tokens_param": spec.max_tokens_param})
+    return cls(api_key, client=client)
