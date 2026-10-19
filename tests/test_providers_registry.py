@@ -240,6 +240,9 @@ def test_cli_keys_and_providers_cover_deepseek_and_your_own(tmp_path, monkeypatc
     assert "DEEPSEEK_API_KEY=ds-secret" in saved and "GROQ_API_KEY=gq-secret" in saved
     out = cli("keys", "list").output
     assert "deepseek" in out and "DEEPSEEK_API_KEY" in out and "groq" in out and "GROQ_API_KEY" in out and "secret" not in out
+    write_settings(home, custom_providers={"groq": GOOD["groq"], "ollama": GOOD["ollama"]})
+    local = [ln for ln in cli("keys", "list").output.splitlines() if ln.startswith("ollama")][0]
+    assert "not required" in local and "no key needed" in local and "OLLAMA_API_KEY" not in local
     assert "deepseek" in cli("providers", "list").output and "groq" in cli("providers", "list").output
     assert cli("keys", "remove", "groq").exit_code == 0 and "GROQ_API_KEY" not in (home / "keys.env").read_text()
     bad = cli("keys", "set", "mistral", "--stdin", input="k\n")

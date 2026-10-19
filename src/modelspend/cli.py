@@ -1156,7 +1156,8 @@ def keys_list():
     cfg = Config.from_env()
     for p in registry.all_providers():
         src = cfg.key_sources.get(p)
-        typer.echo(f"{p:<10}{'set (' + src + ')' if src else 'not set':<26}env var: {' or '.join(registry.key_env()[p])}")
+        hint = f"env var: {' or '.join(registry.key_env()[p])}" if registry.spec(p).needs_key else "no key needed (local server)"
+        typer.echo(f"{p:<10}{'set (' + src + ')' if src else 'not set':<26}{hint}")
     typer.echo(f"\nkeys file: {keys_path(cfg.home)} ({'exists' if keys_path(cfg.home).exists() else 'not created yet'})")
 
 
