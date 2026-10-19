@@ -74,7 +74,16 @@ def settings_path(home: Path) -> Path:
 
 def load_settings(home: Path) -> dict:
     p = settings_path(home)
-    return json.loads(p.read_text()) if p.exists() else {}
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except json.JSONDecodeError as e:  # a hand edit gone wrong: say where, not a traceback
+        raise ValueError(f"settings.json is not valid JSON ({e.msg} at line {e.lineno}, column {e.colno}). Fix {p}, or delete it to start over. "
+                         "It must hold ONE object: merge new blocks inside the outer braces.") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"settings.json must contain one JSON object ({p})")
+    return data
 
 
 def save_settings(home: Path, data: dict) -> Path:

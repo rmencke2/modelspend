@@ -1516,7 +1516,13 @@ def pricing_reject(proposal_id: str):
 
 
 def main() -> None:
-    app()
+    try:
+        app()
+    except ValueError as e:
+        if not str(e).startswith("settings.json"):
+            raise  # anything else is a bug: keep the traceback
+        typer.echo(f"error: {e}", err=True)  # a mistake in the user's settings file: one clear line, not a traceback
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":

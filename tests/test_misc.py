@@ -268,3 +268,33 @@ def test_salt_survives_another_process_creating_it_first(tmp_path, monkeypatch):
 
     monkeypatch.setattr(store_mod.secrets, "token_bytes", racing)
     assert mine.salt() == rival.salt() == Store(path).salt()
+
+
+def test_a_broken_settings_file_gives_one_clear_line_not_a_traceback(tmp_path, monkeypatch, capsys):
+    import sys
+
+    import pytest
+
+    from modelspend.cli import main
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("MODELSPEND_HOME", str(home))
+    cases = [
+        ('{ "providers": ["openai"] }\n{ "custom_providers": {} }\n', "not valid JSON (Extra data at line 2, column 1)"),  # two objects, the mistake that prompted this
+        ("[1, 2]", "must contain one JSON object"),
+        ('{"thresholds": {"classification": {"min_pass_rate": 95}}}', "settings.json:"),
+        ('{"shadow": {"sample_rat": 1}}', "unknown shadow setting"),
+        ('{"custom_providers": {"g": {"base_url": "http://x.test"}}}', "custom provider name"),
+    ]
+    for text, want in cases:
+        (home / "settings.json").write_text(text)
+        monkeypatch.setattr(sys, "argv", ["modelspend", "keys", "list"])
+        with pytest.raises(SystemExit) as e:
+            main()
+        out = capsys.readouterr()
+        assert e.value.code == 2 and out.err.startswith("error: ") and want in out.err and "Traceback" not in out.err and out.err.count("\n") == 1, (text, out.err)
+    (home / "settings.json").write_text('{"providers": ["openai"]}')  # a valid file still works
+    monkeypatch.setattr(sys, "argv", ["modelspend", "keys", "list"])
+    with pytest.raises(SystemExit) as ok:  # typer exits 0 after a successful command
+        main()
+    assert ok.value.code == 0 and "openai" in capsys.readouterr().out
