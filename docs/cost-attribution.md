@@ -123,6 +123,6 @@ Reports and budget windows are computed from what remains.
 
 - **Only calls made through ModelSpend are counted.** Traffic that bypasses it is invisible. Importing the providers' own usage data
   is planned, not built.
-- Everything is stored locally in SQLite (`~/.modelspend/usage.db`), metadata only: no prompts, no responses, no keys.
+- Everything is stored locally in SQLite (`~/.modelspend/usage.db`), metadata only: no prompts, no responses, no keys (plus keyed hashes and token counts of long repeated prompt starts, for [caching advice](caching.md); never their text, and you can turn it off or erase it).
 - A single machine and SQLite are assumed. Budgets are enforced by the processes that share one usage database on one machine; they are not designed for network file systems or several machines.
 - Budget windows are UTC. Budgets only see calls made through ModelSpend.

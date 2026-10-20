@@ -425,6 +425,25 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
         body, mime = (to_html(d), "text/html; charset=utf-8") if fmt == "html" else (to_markdown(d), "text/markdown; charset=utf-8")
         return Response(body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="modelspend-report.{fmt}"', "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/v1/cache-advice", dependencies=[Depends(auth), Depends(host_guard)])
+    async def cache_advice_view(request: Request):
+        """Which long prompt prefixes repeat and whether they are being cached (`?since=30d&project=&window=5m`). Hashes and counts only; never prompt text."""
+        from ..cacheadvice import build_cache_advice, parse_window
+        from ..report import ReportError, parse_since
+        q = request.query_params
+        extra = [k for k in q if k not in ("since", "project", "window")]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        try:
+            return build_cache_advice(engine.store, engine.catalog, cfg, since=parse_since(q.get("since", "30d")), project=q.get("project") or None,
+                                      window_s=parse_window(q.get("window", "5m")))
+        except ReportError as e:
+            raise InvalidRequest(str(e), param="since")
+        except ValueError as e:
+            raise InvalidRequest(str(e), param="window")
+
     def _shadow_state() -> dict:
         from dataclasses import asdict
         from ..shadow import aggregate, spent_this_month

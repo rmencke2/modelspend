@@ -40,6 +40,9 @@ create table if not exists shadow_results(
   method text, verdict text, reason text,
   used_cost real, cand_cost real, judge_cost real, cand_input int, cand_output int);
 create index if not exists shadow_cat on shadow_results(category, cand_provider, cand_model);
+create table if not exists prefix_stats(
+  request_id text, ts real, provider text, model text, level text, h text, tokens int);
+create index if not exists prefix_seen on prefix_stats(provider, model, h, ts);
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
@@ -178,8 +181,26 @@ class Store:
                 self.db.execute("delete from attempts where request_id in (select id from requests where ts < ?)", (older_than_ts,))
                 self.db.execute("delete from requests where ts < ?", (older_than_ts,))
                 self.db.execute("delete from shadow_results where ts < ?", (older_than_ts,))
+                self.db.execute("delete from prefix_stats where ts < ?", (older_than_ts,))
                 self.db.commit()
         return {"requests": n, "attempts": a, "shadow": sh}
+
+    def record_prefixes(self, request_id: str, provider: str, model: str, levels: list[dict[str, Any]]) -> None:
+        """Keyed hashes and token counts of a request's reusable prompt prefixes. Never the text."""
+        if not levels:
+            return
+        now = time.time()
+        with self.lock:
+            self.db.executemany("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens) values (?,?,?,?,?,?,?)",
+                                [(request_id, now, provider, model, lv["level"], lv["h"], lv["tokens"]) for lv in levels])
+            self.db.commit()
+
+    def forget_prefixes(self) -> int:
+        with self.lock:
+            n = self.db.execute("select count(*) from prefix_stats").fetchone()[0]
+            self.db.execute("delete from prefix_stats")
+            self.db.commit()
+        return n
 
     # ---- queries ----------------------------------------------------------------------
     def latency_p50(self, provider: str, model: str) -> tuple[float, int] | None:

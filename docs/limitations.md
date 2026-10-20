@@ -14,7 +14,7 @@
 - **Streaming**: tool calls arrive whole at the end; no escalation on streams; partial-stream cost is estimated.
 - **Task categorization** is keyword-based (English-centric). Ambiguous prompts get the stricter category; use `task_type` for reliability.
 - **Latency targets** are enforced only from locally observed history (≥ 5 samples).
-- **Privacy**: no prompts/responses stored; but request text still goes to the providers you allow. The `sensitive` flag only restricts to providers you declared acceptable — ModelSpend makes no claims about providers' data handling.
+- **Privacy**: no prompts/responses stored (only keyed hashes and token counts of long repeated prompt starts, for `modelspend caching`: see [docs/caching.md](caching.md); off with `track_prefixes: false`); but request text still goes to the providers you allow. The `sensitive` flag only restricts to providers you declared acceptable — ModelSpend makes no claims about providers' data handling.
 - Single-process SQLite; not designed for multi-tenant hosting.
 
 - **Unpriced models** can run with `allow_unpriced`; their cost is `unknown` and they are ranked by tier then tokens, not cost.

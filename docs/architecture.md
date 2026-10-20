@@ -21,7 +21,7 @@
 | `engine.py` | `Engine.run/stream/plan`: budget `Ledger`, retries, failover, bounded escalation, judge, classifier call |
 | `providers/` | Adapters normalizing messages, usage, finish reasons, errors, tool calls; `mock.py` for tests |
 | `validation.py`, `sandbox.py` | Deterministic validators; Docker-only code execution |
-| `store.py` | SQLite metadata store (no prompts, responses or keys) |
+| `store.py` | SQLite metadata store (no prompts, responses or keys; keyed hashes of long repeated prompt starts, see [caching.md](caching.md)) |
 | `server/` | FastAPI app, OpenAI-compatible endpoint, preview, dashboard |
 | `eval/` | Fixtures (calibration/held-out), harness, simulated providers |
 | `client.py`, `cli.py` | SDK (sync + async) and CLI |

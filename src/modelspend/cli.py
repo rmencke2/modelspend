@@ -746,6 +746,31 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
     raise typer.Exit(1 if any(r.status == "fail" for r in reports) else 0)
 
 
+@app.command()
+def caching(since: str = typer.Option("30d", help="Window: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+            project: Optional[str] = typer.Option(None, help="Only this project's traffic."),
+            window: str = typer.Option("5m", help="How soon a repeat must follow to count as cacheable (90s, 5m, 1h). Providers differ."),
+            forget: bool = typer.Option(False, "--forget", help="Erase every stored prompt-prefix hash and exit."),
+            fmt: str = typer.Option("table", "--format", help="table or json.")):
+    """Which long prompt starts repeat, whether your provider is caching them, and what the misses cost (prompt text is never stored)."""
+    from .cacheadvice import build_cache_advice, parse_window, to_table
+    from .catalog import Catalog
+    from .report import parse_since
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format must be table or json")
+    store = _store()
+    if forget:
+        typer.echo(f"erased {store.forget_prefixes()} stored prefix record(s)")
+        return
+    cfg = Config.from_env()
+    try:
+        rep = build_cache_advice(store, Catalog.from_config(cfg), cfg, since=parse_since(since), project=project, window_s=parse_window(window))
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep))
+
+
 @reconcile_app.command("import")
 def reconcile_import(file: Path = typer.Argument(..., help="Usage export from the provider: CSV, JSON or JSON lines."),
                      provider: Optional[str] = typer.Option(None, help="openai, anthropic, google, xai, deepseek or one you defined (or put a 'provider' column in the file)."),

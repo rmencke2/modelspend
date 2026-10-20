@@ -24,6 +24,7 @@ from .errors import (
     AllAttemptsFailed, BudgetTooLow, InvalidRequest, ModelSpendError, NoEligibleModel, ProviderError, StreamInterrupted,
 )
 from .policy import POLICY_VERSION
+from .prefixes import track as track_prefix
 from .pricing import cost_for, estimate_cost
 from .providers.base import ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, StreamEnd
 from .routing import Router
@@ -448,6 +449,7 @@ class Engine:
         result = self._result(req, plan, ledger, counters, cand, resp, report, status, first_estimate, notes, t0)
         if self.store:
             self.store.record(result)
+            track_prefix(self.store, self.cfg.track_prefixes, req, cand.provider, cand.model, result.request_id)
         if self.shadow is not None:
             self.shadow.maybe(req, plan, cand, resp, report, status)
         return result
@@ -622,4 +624,5 @@ class Engine:
         result = self._result(req, plan, ledger, counters, cur, final, report, status, first_estimate, notes, t0)
         if self.store:
             self.store.record(result)
+            track_prefix(self.store, self.cfg.track_prefixes, req, cur.provider, cur.model, result.request_id)
         yield StreamEvent(type="done", result=result)

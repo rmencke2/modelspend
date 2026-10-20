@@ -93,6 +93,13 @@ def save_settings(home: Path, data: dict) -> Path:
     return p
 
 
+def _settings_bool(settings: dict, key: str, default: bool) -> bool:
+    v = settings.get(key, default)
+    if not isinstance(v, bool):
+        raise ValueError(f"settings.json: '{key}' must be true or false")
+    return v
+
+
 def _bool(v: str | None, default: bool = False) -> bool:
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
@@ -200,6 +207,7 @@ class Config:
     request_timeout_s: float = 60.0
     exact_token_counts: bool = False
     classifier_model_enabled: bool = False
+    track_prefixes: bool = True  # keep a keyed hash and token count of long repeated prompt prefixes (never their text) for `modelspend caching`
     sensitive_providers: list[str] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8787
@@ -274,6 +282,7 @@ class Config:
             default_project=(e.get("MODELSPEND_PROJECT") or None), default_agent=(e.get("MODELSPEND_AGENT") or None),
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
+            track_prefixes=_bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True)),
             host=e.get("MODELSPEND_HOST", "127.0.0.1"),
             port=int(e.get("MODELSPEND_PORT", 8787)),
             api_token=e.get("MODELSPEND_API_TOKEN") or None,
