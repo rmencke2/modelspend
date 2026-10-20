@@ -276,7 +276,7 @@ async def refresh_provider(
     try:
         entries, meta = await extract_prices(engine, provider, text, prov_list, max_tokens, extractor_model)
     except Exception as e:  # noqa: BLE001
-        return {"provider": provider, "state": "error", "detail": f"extraction failed: {getattr(e, 'message', str(e))[:200]}"}
+        return {"provider": provider, "state": "error", "detail": f"extraction failed: {getattr(e, 'message', str(e))[:1200]}"}  # the router's reason also says how to fix it: never cut it off
 
     catalog = engine.catalog
     changes, unchanged, unmatched, ambiguous, unverified = [], [], [], [], []

@@ -345,3 +345,94 @@ def test_reasoning_tokens_are_shown_inside_the_output_count_so_a_thinking_model_
     g = by(run(think))["generate"]
     assert g.status == "ok" and "40 out (of which 35 reasoning)" in g.detail
     assert "of which" not in by(run(Fake()))["generate"].detail  # nothing to show for a model that does not think
+
+
+# ---- a listed model the key is refused, and testing structured output on demand ----
+from modelspend.verify import pick_models  # noqa: E402
+
+
+def bare(*ids, provider="openai"):
+    return Catalog.load(overrides={"add_models": [{"provider": provider, "id": i, "availability": "available", "verified_on": "2026-10-20", "capabilities": {"text": True}} for i in ids]})
+
+
+GEM = ("gemini-2.5-flash", "gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-omni-flash-preview", "gemini-3.5-flash")
+
+
+def test_with_nothing_priced_plain_text_models_come_first_latest_aliases_before_dated_ones_and_previews_after_stable():
+    order = [m.id for m in pick_models(bare(*GEM, provider="google"), "google", set(GEM))]
+    assert order[0] == "gemini-flash-latest"  # an alias points at what is served now
+    assert order[1:3] == ["gemini-2.5-flash", "gemini-3.5-flash"] and order[3] == "gemini-3-flash-preview"  # stable before preview
+    assert set(order[4:]) == {"gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts", "gemini-omni-flash-preview"}  # image, speech and omni variants last
+    priced = cat()  # with prices the order is simply cheapest first
+    assert [m.id for m in pick_models(priced, "openai", {"small", "big"})] == ["small", "big"]
+    assert [m.id for m in pick_models(priced, "openai", None, "openai/big")] == ["big"] and pick_models(priced, "openai", None, "openai/none") == []
+
+
+class Refusing(Fake):
+    """Lists many models but refuses some of them the way Google does for a model that is no longer offered to new accounts."""
+
+    def __init__(self, refuse, status=404, kind="bad_request", message="This model models/x is no longer available to new users.", **kw):
+        super().__init__(**kw)
+        self.refuse, self.status, self.kind, self.message, self.asked = set(refuse), status, kind, message, []
+
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model":
+            self.asked.append(req.model)
+            if req.model in self.refuse:
+                raise ProviderError("openai", self.kind, self.message, self.status)
+        return await super().generate(req)
+
+
+def test_a_model_the_key_is_refused_is_skipped_and_the_next_candidate_is_used():
+    cat3 = bare("a-old", "b-latest", "c-new")
+    ad = Refusing(refuse={"b-latest", "a-old"}, models=("a-old", "b-latest", "c-new"))
+    r = run(ad, catalog=cat3)
+    assert r.model == "openai/c-new" and r.status == "ok" and ad.asked[:3] == ["b-latest", "a-old", "c-new"]
+    skips = [c.detail for c in r.checks if c.name == "model" and c.status == "skip"]
+    assert len(skips) == 2 and "b-latest was refused by this key" in skips[0] and "trying openai/a-old" in skips[0] and "no longer available" in skips[0]
+
+
+def test_when_every_candidate_is_refused_it_is_not_verified_not_failed_and_only_three_are_tried():
+    ad = Refusing(refuse={"m1", "m2", "m3", "m4"}, models=("m1", "m2", "m3", "m4"))
+    r = run(ad, catalog=bare("m1", "m2", "m3", "m4"))
+    assert r.status == "skip" and by(r)["generate"].status == "skip" and "refused the model" in by(r)["generate"].detail and "--model" in by(r)["generate"].detail
+    assert len(ad.asked) == 3  # not the whole catalog
+
+
+def test_a_named_model_is_never_swapped_and_a_server_error_does_not_trigger_the_fallback():
+    ad = Refusing(refuse={"m1"}, models=("m1", "m2"))
+    r = run(ad, catalog=bare("m1", "m2"), model="openai/m1")
+    assert ad.asked == ["m1"] and r.status == "skip"
+    srv = Refusing(refuse={"m1"}, status=500, kind="server", message="boom", models=("m1", "m2"))
+    r2 = run(srv, catalog=bare("m1", "m2"))
+    assert set(srv.asked) == {"m1"} and by(r2)["generate"].status == "fail"  # never switched to m2; a 500 says something about the provider, so it is not hidden by trying another model
+
+
+def test_structured_output_can_be_tested_on_demand_and_a_pass_prints_the_command_that_records_it():
+    plain = by(run(Fake()))["structured"]
+    assert plain.status == "skip" and "--structured" in plain.detail
+    ok = by(run(Fake(), structured=True))["structured"]
+    assert ok.status == "ok" and "modelspend catalog set openai/small capabilities.structured_output=true" in ok.detail
+    bad = by(run(Fake(schema_reply="pong"), structured=True))["structured"]
+    assert bad.status == "warn" and "do not mark it" in bad.detail  # not claimed, so not a failure of the catalog's word
+    claimed = Catalog.load(overrides={"add_models": [dict(_m("openai", "small", 0.1, 0.4), capabilities={"text": True, "structured_output": True})]})
+    assert by(run(Fake(schema_reply="pong"), catalog=claimed))["structured"].status == "fail"  # claimed and false is still a failure
+    assert plan_cost(CAT.get("openai/small"), False, True) > plan_cost(CAT.get("openai/small"), False, False)
+
+
+def test_error_details_keep_enough_of_the_message_to_read_the_reason():
+    long = "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use a newer model for the latest features and improvements."
+    class Gone(Fake):
+        async def generate(self, req):
+            raise ProviderError("openai", "server", long, 500)
+    d = by(run(Gone()))["generate"].detail
+    assert "latest features and improvements" in d  # used to be cut at 100 characters, mid-sentence
+
+
+def test_only_a_refusal_of_the_model_triggers_the_fallback_not_any_bad_request():
+    gone = Refusing(refuse={"m1"}, message="Resource unavailable", models=("m1", "m2"))  # only the 404 status says it is the model
+    r = run(gone, catalog=bare("m1", "m2"))
+    assert r.model == "openai/m2" and r.status == "ok"
+    bad = Refusing(refuse={"m1", "m2"}, status=400, message="Unsupported value: temperature", models=("m1", "m2"))
+    r2 = run(bad, catalog=bare("m1", "m2"))
+    assert set(bad.asked) == {"m1"} and by(r2)["generate"].status == "fail"  # a real bad request about OUR request is not hidden by trying another model

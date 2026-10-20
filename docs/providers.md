@@ -115,7 +115,7 @@ modelspend catalog sync --provider google --add-new --only flash --write
 modelspend verify google --cache --report gemini-check.md
 ```
 
-`verify` needs no price. If it picks a model you do not want (an image or audio variant), name one: `modelspend verify google --model google/<model>`. Paste the report, FAILs and WARNs included.
+`verify` needs no price. It prefers plain text models (not image, speech or audio variants) and `-latest` aliases, and if the key is refused a model it tries the next (up to three), saying which it skipped; on a new account some listed models are refused, as the first live run showed. Prefer a tighter filter than `--only flash`: `--only gemini-flash-latest,gemini-flash-lite-latest --exact`. To name the model yourself: `modelspend verify google --model google/gemini-flash-latest`. Paste the report, FAILs and WARNs included.
 
 ## Pricing DeepSeek from its own page (needs your key; costs a few cents)
 
@@ -125,7 +125,7 @@ modelspend verify google --cache --report gemini-check.md
 modelspend pricing refresh deepseek --extractor-model openai/gpt-4.1
 ```
 
-It prints a proposal id and a `modelspend pricing show ...` line to copy. Check the proposal against the page itself before applying, because three things are easy to get wrong on this page: **input must be the cache-MISS price and `cached input` the cache-HIT price** (the page lists both, and a model can swap them), a printed discount or off-peak price should be in the notes rather than the price, and the page's model names may differ from your catalog ids (`deepseek-v4-flash` on the page, `deepseek-flash` from the API). A row that matches no catalog model is shown with its verified prices and the `modelspend catalog price ...` command to record them if you agree it is the same model. When the proposal is right: `modelspend pricing apply <the proposal id>`. If the page cannot be fetched or read (some pages need JavaScript), copy the price table into a file and use `modelspend pricing paste deepseek --file table.txt`, which applies the same checks.
+The extractor must support structured output, and ModelSpend only believes that after you have recorded it: if the run stops with "structured output not verified for this model", test it and record it in two commands (`modelspend verify openai --model openai/gpt-4.1 --structured`, then the `modelspend catalog set ... capabilities.structured_output=true` line it prints when the test passes). It prints a proposal id and a `modelspend pricing show ...` line to copy. Check the proposal against the page itself before applying, because three things are easy to get wrong on this page: **input must be the cache-MISS price and `cached input` the cache-HIT price** (the page lists both, and a model can swap them), a printed discount or off-peak price should be in the notes rather than the price, and the page's model names may differ from your catalog ids (`deepseek-v4-flash` on the page, `deepseek-flash` from the API). A row that matches no catalog model is shown with its verified prices and the `modelspend catalog price ...` command to record them if you agree it is the same model. When the proposal is right: `modelspend pricing apply <the proposal id>`. If the page cannot be fetched or read (some pages need JavaScript), copy the price table into a file and use `modelspend pricing paste deepseek --file table.txt`, which applies the same checks.
 
 ## Taking models back out
 

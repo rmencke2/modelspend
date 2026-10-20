@@ -57,21 +57,45 @@ class ProviderReport:
         return "skip" if worst == "ok" and blocked else worst  # only the key was checked (or the account refused the calls): nothing about this provider was verified
 
 
-def pick_model(catalog: Catalog, provider: str, visible: set[str] | None = None, explicit: str | None = None) -> Model | None:
-    """The cheapest usable text model for this provider (priced, not retired), preferring ones the key can actually see."""
+# names that mark a model as something other than a plain text model (speech, images, live audio, ...): never the default pick
+NOT_PLAIN_TEXT = ("tts", "image", "audio", "live", "embed", "omni", "imagen", "veo", "transcribe", "native", "robotics", "computer", "guard")
+PREVIEWS = ("preview", "exp", "beta")
+
+
+def _unpriced_order(m: Model) -> tuple:
+    """For a provider with no prices yet: plain text models first, then `-latest` aliases (they point at what is served now), stable before preview."""
+    i = m.id.lower()
+    return (any(w in i for w in NOT_PLAIN_TEXT), not i.endswith("-latest"), any(w in i for w in PREVIEWS), m.ref)
+
+
+def pick_models(catalog: Catalog, provider: str, visible: set[str] | None = None, explicit: str | None = None) -> list[Model]:
+    """Candidates in the order to try them: the cheapest priced text models first, else (nothing priced yet) the most plausible ones the key can see."""
     if explicit:
         try:
-            return catalog.get(explicit)
+            return [catalog.get(explicit)]
         except KeyError:
-            return None
+            return []
     live = [m for m in catalog.models if m.provider == provider and m.availability not in ("deprecated", "unavailable")]
     pool = [m for m in live if m.pricing and m.pricing.known and m.pricing.currency == "USD"]
     pool = [m for m in pool if visible is not None and m.id in visible] or pool
     if pool:
-        return min(pool, key=lambda m: (m.pricing.input_per_mtok + m.pricing.output_per_mtok, m.ref))
+        return sorted(pool, key=lambda m: (m.pricing.input_per_mtok + m.pricing.output_per_mtok, m.ref))
     # nothing is priced yet (a provider you just synced): checking the adapter needs a model, not a price, so use one the key can see
     seen = [m for m in live if visible is not None and m.id in visible]
-    return min(seen or live, key=lambda m: m.ref, default=None)
+    return sorted(seen or live, key=_unpriced_order)
+
+
+def pick_model(catalog: Catalog, provider: str, visible: set[str] | None = None, explicit: str | None = None) -> Model | None:
+    found = pick_models(catalog, provider, visible, explicit)
+    return found[0] if found else None
+
+
+def _model_refused(e: BaseException) -> bool:
+    """The key was refused THIS model (not found, retired, no longer offered to new accounts): a reason to try another model, not a verdict on the adapter."""
+    if not isinstance(e, ProviderError) or e.kind != "bad_request":
+        return False
+    text = e.message.lower()
+    return e.status_code == 404 or any(k in text for k in ("no longer available", "not found", "does not exist", "is not available", "not supported for"))
 
 
 def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None = None) -> ProviderRequest:
@@ -88,7 +112,7 @@ def _err(e: BaseException) -> str:
     kind = getattr(e, "kind", type(e).__name__)
     hint = {"quota": " (the account is out of credit or at a spending limit: that is for you to fix, not an adapter problem)",
             "rate_limit": " (rate limited: wait a minute and run it again)"}.get(kind, "")
-    return f"{kind}: {str(getattr(e, 'message', e))[:100]}{hint}"
+    return f"{kind}: {str(getattr(e, 'message', e))[:220]}{hint}"
 
 
 def _retry_after(e: BaseException) -> float:
@@ -115,6 +139,8 @@ def _fail(e: BaseException) -> tuple[str, str]:
     """(status, detail) for a call that raised. An account refusal is 'skip' (blocked), not 'fail': FAIL is reserved for 'a number would be wrong'."""
     if getattr(e, "kind", None) in BLOCKING:
         return "skip", "blocked, not verified: " + _err(e)
+    if _model_refused(e):
+        return "skip", "blocked, not verified: this key is refused the model (it may be retired or no longer offered to new accounts); name another with --model. " + _err(e)
     return "fail", _err(e)
 
 
@@ -127,11 +153,11 @@ def _total(u: Usage) -> int:
     return u.input_tokens + u.cache_read_tokens + u.cache_write_tokens
 
 
-def plan_cost(model: Model | None, cache: bool) -> float:
+def plan_cost(model: Model | None, cache: bool, structured: bool = False) -> float:
     """An upper bound on what the checks can cost: every call charged its full output allowance."""
     if not model or not model.pricing or not model.pricing.known:
         return 0.0
-    out_calls = 2 + (1 if model.capabilities.structured_output else 0) + (3 if cache else 0)  # the cache check may repeat once after a wait
+    out_calls = 2 + (1 if (model.capabilities.structured_output or structured) else 0) + (3 if cache else 0)  # the cache check may repeat once after a wait
     inp = 60 * 3 + (3 * 1600 if cache else 0)
     return (inp * model.pricing.input_per_mtok + out_calls * MAX_OUT * model.pricing.output_per_mtok) / 1_000_000
 
@@ -140,7 +166,7 @@ CACHE_RETRY_WAIT_S = 5.0  # some providers build their cache a few seconds after
 
 
 async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog, *, model: str | None = None, cache: bool = False,
-                          sleep: Any = asyncio.sleep) -> ProviderReport:
+                          sleep: Any = asyncio.sleep, structured: bool = False) -> ProviderReport:
     rep = ProviderReport(name, None)
     add = lambda n, s, d: rep.checks.append(Check(n, s, d))  # noqa: E731
     visible: set[str] | None = None
@@ -150,12 +176,14 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     except Exception as e:  # noqa: BLE001
         add("key", *_fail(e))
         return rep  # nothing else can work without a key
-    m = pick_model(catalog, name, visible, model)
+    cands = pick_models(catalog, name, visible, model)
+    m = cands[0] if cands else None
+    fallbacks = cands[1:3]  # (a model you named is the only candidate, so it is never swapped for another)
     if m is None:
         add("model", "skip", f"no priced model in your catalog for {name}: run `modelspend catalog sync`, then `modelspend catalog price <ref> --input .. --output ..`")
         return rep
     rep.model = m.ref
-    rep.est_cost = plan_cost(m, cache)
+    rep.est_cost = plan_cost(m, cache, structured)
     if not (m.pricing and m.pricing.known):
         add("model", "ok", f"using {m.ref}: no price in your catalog, so no cost is shown (the checks do not need one)")
     if m.id not in visible and visible:
@@ -176,10 +204,26 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         add("errors", "fail", f"an SDK error leaked past the adapter unclassified ({type(e).__name__}): the router cannot react to it")
     # 3. generate
     gen_usage: Usage | None = None
+    r: Any = None
+    gen_err: BaseException | None = None
+    while r is None and gen_err is None:
+        try:
+            t0 = time.monotonic()
+            r = await _retrying(lambda: adapter.generate(_req(m, PROMPT)), sleep)
+            ms = int((time.monotonic() - t0) * 1000)
+        except Exception as e:  # noqa: BLE001
+            if _model_refused(e) and fallbacks:
+                nxt = fallbacks.pop(0)
+                add("model", "skip", f"{m.ref} was refused by this key (HTTP {getattr(e, 'status_code', '?')}: {e.message[:160]}); trying {nxt.ref}")  # type: ignore[attr-defined]
+                m, rep.model = nxt, nxt.ref
+                rep.est_cost = plan_cost(m, cache, structured)
+                if not (m.pricing and m.pricing.known):
+                    add("model", "ok", f"using {m.ref}: no price in your catalog, so no cost is shown")
+                continue
+            gen_err = e
     try:
-        t0 = time.monotonic()
-        r = await _retrying(lambda: adapter.generate(_req(m, PROMPT)), sleep)
-        ms = int((time.monotonic() - t0) * 1000)
+        if gen_err is not None:
+            raise gen_err
         u = r.usage
         gen_usage = u
         cost = ""
@@ -200,6 +244,8 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
             add("generate", "ok", facts)
     except Exception as e:  # noqa: BLE001
         add("generate", *_fail(e))
+        if _model_refused(e):
+            return rep  # every later step would ask the same refused model again
     # 4. stream
     try:
         async def consume() -> tuple[str, Any]:
@@ -222,18 +268,26 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     except Exception as e:  # noqa: BLE001
         add("stream", *_fail(e))
     # 5. structured output, only where the catalog claims it
-    if m.capabilities.structured_output:
+    claimed = bool(m.capabilities.structured_output)
+    if claimed or structured:
         try:
             r = await _retrying(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA)), sleep)
             try:
                 ok = json.loads(r.text).get("answer") == "pong"
             except (ValueError, AttributeError):
                 ok = False
-            add("structured", "ok" if ok else "fail", "reply parsed and matched the schema" if ok else f"the catalog says {m.ref} supports structured output, but the reply was not the schema's JSON")
+            if ok and not claimed:  # asked for, and it works: say how to record that, which is the step ModelSpend requires before it will route a schema request here
+                add("structured", "ok", f"works on this model. To let ModelSpend use it for structured output: modelspend catalog set {m.ref} capabilities.structured_output=true")
+            elif ok:
+                add("structured", "ok", "reply parsed and matched the schema")
+            elif claimed:
+                add("structured", "fail", f"the catalog says {m.ref} supports structured output, but the reply was not the schema's JSON")
+            else:
+                add("structured", "warn", f"{m.ref} did not return the schema's JSON: do not mark it as supporting structured output")
         except Exception as e:  # noqa: BLE001
             add("structured", *_fail(e))
     else:
-        add("structured", "skip", "the catalog does not claim structured output for this model")
+        add("structured", "skip", "the catalog does not claim structured output for this model (test it with --structured)")
     # 6. cached-token accounting (opt in: ~3,000 input tokens)
     if cache:
         try:
@@ -257,13 +311,14 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     return rep
 
 
-async def verify_all(adapters: dict[str, ProviderAdapter], catalog: Catalog, targets: list[str], *, model: str | None = None, cache: bool = False) -> list[ProviderReport]:
+async def verify_all(adapters: dict[str, ProviderAdapter], catalog: Catalog, targets: list[str], *, model: str | None = None, cache: bool = False,
+                     structured: bool = False) -> list[ProviderReport]:
     out = []
     for p in targets:
         if p not in adapters:
             out.append(ProviderReport(p, None, [Check("key", "skip", "no key configured")]))
             continue
-        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache))
+        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache, structured=structured))
     return out
 
 

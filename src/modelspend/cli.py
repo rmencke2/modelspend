@@ -711,6 +711,7 @@ def share(out: Path = typer.Option(Path("modelspend-report.html"), "--out", "-o"
 def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers to check (default: every provider that has a key)."),
            model: Optional[str] = typer.Option(None, help="Check this model (provider/id) instead of the cheapest priced one."),
            cache: bool = typer.Option(False, "--cache", help="Also check cached-token accounting (two calls of about 1,500 input tokens)."),
+           structured: bool = typer.Option(False, "--structured", help="Also test structured output even if the catalog does not claim it; if it works, the exact command to record that is printed."),
            yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask before spending."),
            report_file: Optional[Path] = typer.Option(None, "--report", help="Also write a Markdown report you can paste into an issue (no keys, no prompts).")):
     """Live check of a provider on your own key: usage reporting, streaming, error handling, structured output (a fraction of a cent)."""
@@ -728,7 +729,7 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
     for t in targets:
         m = pick_model(cat, t, None, model if model and model.startswith(t + "/") else None)
         plan.append((t, m))
-    bound = sum(plan_cost(m, cache) for _, m in plan)
+    bound = sum(plan_cost(m, cache, structured) for _, m in plan)
     typer.echo("This sends a few tiny requests to each provider, directly (they are not recorded in your ledger):")
     for t, m in plan:
         typer.echo(f"  {t:<12}{m.ref if m else '(no priced model in your catalog: only the key check will run)'}")
@@ -737,7 +738,7 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
                + (f", not counting {', '.join(unpriced)} (no price in your catalog: expect a fraction of a cent)." if unpriced else "."))
     if not yes and not typer.confirm("Go ahead?", default=True):
         raise typer.Exit(1)
-    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache))
+    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured))
     typer.echo("\n" + to_table(reports))
     md = to_markdown(reports, __version__, str(_date.today()))
     if report_file:

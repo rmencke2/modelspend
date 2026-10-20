@@ -135,3 +135,14 @@ def test_the_server_answers_400_not_500_for_a_source_check_on_a_provider_with_no
     c = TestClient(create_app(eng, cfg), base_url="http://127.0.0.1")
     r = c.post("/v1/sources/openrouter/check", json={})
     assert r.status_code == 400 and "import-openrouter" in r.text
+
+
+def test_a_refused_extractor_says_why_and_how_to_fix_it_in_full(tmp_path):
+    """Found live: `pricing refresh --extractor-model openai/gpt-4.1` failed with the reason cut off at 200 characters, hiding the fix the router had written."""
+    r = Rig(tmp_path)
+    apply_assignments(r.cfg, "anthropic/claude-haiku-5-5", ["capabilities.structured_output=false"])  # the extractor's structured output is not verified
+    r.engine.catalog = Catalog.from_config(r.cfg)
+    r.engine.router.catalog = r.engine.catalog
+    out = asyncio.run(r.refresh(extractor_model="anthropic/claude-haiku-5-5"))
+    assert out["state"] == "error" and len(out["detail"]) > 300
+    assert "structured output not verified" in out["detail"] and "capabilities.structured_output=true" in out["detail"]
