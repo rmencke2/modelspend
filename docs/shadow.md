@@ -42,6 +42,8 @@ A candidate that is **cut off at the output cap** on the request is **not counte
 
 ## The savings report
 
+`modelspend share` turns the savings and what-if numbers into one file you can send to someone (HTML or Markdown). It holds numbers, model names and task types only; project names are left out unless you pass `--include-projects`; the HTML has no scripts and makes no requests. Look it over before you share it.
+
 `modelspend whatif` is the price-only companion: your recorded tokens priced on every model in the catalog, cheapest first, with the shadow evidence beside each price. It assumes the same tokens on every model and makes no quality claim; models with no evidence read `unmeasured`.
 
 `modelspend savings` (and `GET /v1/savings`) shows, per task type: your spend in the window, the cheapest model that **clears the bar** on shadow evidence, how many comparisons it passed, the 95% lower bound, its measured cost relative to the model you use, and the projected saving. A model is only called *ready* when the **same bar routing uses** (your thresholds, else the profile's) is met by the 95% **Wilson lower bound** of its pass rate: a few lucky samples never qualify. Everything else shows what is missing ("needs 6 more", "below the bar").

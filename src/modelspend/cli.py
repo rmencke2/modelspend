@@ -672,6 +672,41 @@ def whatif(since: str = typer.Option("30d", help="Window for your traffic: 7d, 2
     typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep, top=10_000 if show_all else 15))
 
 
+@app.command()
+def share(out: Path = typer.Option(Path("modelspend-report.html"), "--out", "-o", help="Where to write the report; '-' prints it instead."),
+          since: str = typer.Option("30d", help="Window: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+          profile: str = typer.Option("balanced", help="Judge the evidence against this profile's bars."),
+          project: Optional[str] = typer.Option(None, help="Only this project's traffic."),
+          include_projects: bool = typer.Option(False, "--include-projects", help="Add a spend-by-project table. Off by default: project names can name clients or products."),
+          title: str = typer.Option("ModelSpend report", help="Page title."),
+          fmt: str = typer.Option("html", "--format", help="html (one static file) or md (to paste into an issue or chat).")):
+    """Write a report you can share: spend, projected saving, evidence and the what-if table. Numbers only; no prompts, responses, keys or (by default) project names."""
+    from .catalog import Catalog
+    from .report import parse_since
+    from .sharereport import build_share, to_html, to_markdown, window_label
+    if fmt not in ("html", "md"):
+        raise typer.BadParameter("--format must be html or md")
+    if profile not in ("economy", "balanced", "high_assurance"):
+        raise typer.BadParameter("--profile must be economy, balanced or high_assurance")
+    cfg = Config.from_env()
+    try:
+        d = build_share(_store(), Catalog.from_config(cfg), cfg, profile=profile, since=parse_since(since), project=project,
+                        include_projects=include_projects, title=title, window=window_label(since))
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    text = to_html(d) if fmt == "html" else to_markdown(d)
+    if str(out) == "-":
+        typer.echo(text, nl=False)
+        return
+    if out.is_dir():
+        typer.echo(f"error: {out} is a folder; give a file name", err=True)
+        raise typer.Exit(2)
+    out.write_text(text, encoding="utf-8")
+    typer.echo(f"wrote {out} ({len(text) // 1024 + 1} KB). It holds numbers, model names and task types only"
+               + (", plus project names" if include_projects else "") + ". Look it over before you share it.")
+
+
 @reconcile_app.command("import")
 def reconcile_import(file: Path = typer.Argument(..., help="Usage export from the provider: CSV, JSON or JSON lines."),
                      provider: Optional[str] = typer.Option(None, help="openai, anthropic, google, xai, deepseek or one you defined (or put a 'provider' column in the file)."),

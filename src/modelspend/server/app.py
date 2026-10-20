@@ -399,6 +399,32 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
         except ReportError as e:
             raise InvalidRequest(str(e), param="since")
 
+    @app.get("/v1/share", dependencies=[Depends(auth), Depends(host_guard)])
+    async def share_view(request: Request):
+        """A shareable report as a download (`?format=html|md&since=30d&profile=balanced&project=&include_projects=1`). Numbers only."""
+        from fastapi.responses import Response
+        from ..report import ReportError, parse_since
+        from ..sharereport import build_share, to_html, to_markdown, window_label
+        q = request.query_params
+        extra = [k for k in q if k not in ("format", "since", "profile", "project", "include_projects", "title")]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        fmt = q.get("format", "html")
+        if fmt not in ("html", "md"):
+            raise InvalidRequest("format must be html or md", param="format")
+        if q.get("profile", "balanced") not in ("economy", "balanced", "high_assurance"):
+            raise InvalidRequest("profile must be economy, balanced or high_assurance", param="profile")
+        try:
+            d = build_share(engine.store, engine.catalog, cfg, profile=q.get("profile", "balanced"), since=parse_since(q.get("since", "30d")),
+                            project=q.get("project") or None, include_projects=q.get("include_projects") == "1",
+                            title=q.get("title") or "ModelSpend report", window=window_label(q.get("since", "30d")))
+        except ReportError as e:
+            raise InvalidRequest(str(e), param="since")
+        body, mime = (to_html(d), "text/html; charset=utf-8") if fmt == "html" else (to_markdown(d), "text/markdown; charset=utf-8")
+        return Response(body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="modelspend-report.{fmt}"', "X-Content-Type-Options": "nosniff"})
+
     def _shadow_state() -> dict:
         from dataclasses import asdict
         from ..shadow import aggregate, spent_this_month

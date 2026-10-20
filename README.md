@@ -190,6 +190,7 @@ It compares tokens and cost per model over the days the export covers and flags 
 ```bash
 modelspend shadow on          # opt in, capped, off by default
 modelspend whatif --from-export usage.csv --export-provider openai   # same table from a provider usage export, before you have any traffic here
+modelspend share              # one static, shareable report (HTML or --format md): numbers only, no prompts, keys or project names
 modelspend whatif             # your recorded tokens priced on every model in the catalog (same tokens, catalog prices)
 modelspend savings            # per task type: spend now, the cheapest model that clears the evidence bar, projected saving
 modelspend shadow apply       # shows what would change; --yes lets routing use the results

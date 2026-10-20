@@ -99,6 +99,7 @@ details.tv summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:8px
 <p class="note">What each kind of work could cost on a <b>cheaper model</b>, judged from <b>your own requests</b>. A sample of them is also tried on cheaper models in the background (<b>shadow evaluation</b>, off until you turn it on) and compared with the answer you actually used. A model is only recommended when the same evidence bar routing uses is met. <b>This is a projection, not a measurement</b>: it assumes the sampled requests are typical, and "passed" means "as good as the answer you used", not "correct". Your provider's invoice is authoritative.</p>
 <div class="filters" role="group" aria-label="Filters"><span class="seg" id="s-win"><button data-w="7d">7 days</button><button data-w="30d">30 days</button><button data-w="all">All</button></span></div>
 <div class="hero" id="s-hero">$0<small>projected saving</small></div>
+<p class="note"><button id="s-share">Download a shareable report</button> <button id="s-share-md">as Markdown</button> <span class="msg" id="s-share-msg"></span> One static file: numbers only, no prompts or keys, no project names.</p>
 <div class="tiles" id="s-tiles"></div>
 <h2>Spend now, and the projected saving where the evidence clears the bar</h2>
 <div class="chart"><div class="legend" aria-label="Legend"><span><i style="background:var(--s1)"></i>Would still cost</span><span><i style="background:var(--s3)"></i>Projected saving</span></div><div id="s-bars"></div></div>
@@ -295,6 +296,13 @@ function whatifTable(el,w){const head='<tr><th>Model</th><th class="n">Would cos
  el.innerHTML=head+(w.rows.slice(0,15).map(r=>{const nt=[r.used?'you used it':'',r.too_large?n0(r.too_large)+' call(s) exceed its context':'',r.over_output_cap?n0(r.over_output_cap)+' call(s) exceed its output cap':''].filter(Boolean).join('; ');
   return `<tr><td>${esc(short(r.model))} <span class="sv-need">${esc(r.model.split('/')[0])}</span></td><td class="n">${esc(usd(r.cost))}</td><td class="n">${r.ratio!=null?((r.ratio-1)*100>0?'+':'')+Math.round((r.ratio-1)*100)+'%':'-'}</td>
    <td class="n">${r.evidence_n?r.evidence_passes+'/'+r.evidence_n:'unmeasured'}</td><td>${esc(r.clears.join(', ')||'-')}</td><td>${esc(nt)}</td></tr>`}).join('')||'<tr><td>No data yet</td></tr>')}
+async function downloadShare(fmt){let t='';try{t=sessionStorage.getItem('ms_tok')||''}catch(e){}
+ try{const r=await fetch('/v1/share?format='+fmt+'&since='+SV.win,{headers:t?{Authorization:'Bearer '+t}:{}});
+  if(r.status==401){$('auth').hidden=false;throw new Error('API token needed')}
+  if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error((j.error&&j.error.message)||r.statusText)}
+  const u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='modelspend-report.'+fmt;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);say('s-share-msg','downloaded','ok')}
+ catch(e){say('s-share-msg',e.message,'warn')}}
+$('s-share').addEventListener('click',()=>downloadShare('html'));$('s-share-md').addEventListener('click',()=>downloadShare('md'));
 async function loadSavings(){const root=$('savings');root.classList.add('loading');
  try{const [s,sh]=await Promise.all([api('/v1/savings?since='+SV.win),api('/v1/shadow')]);const T=s.totals,ready=T.categories_ready;
   $('s-hero').innerHTML=esc(usd(T.projected_saving_usd))+'<small>'+(ready?'projected saving ('+Math.round(100*T.projected_saving_pct)+'% of spend), in '+ready+' of '+T.categories+' task types':'no task type has enough evidence yet')+'</small>';
