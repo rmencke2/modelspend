@@ -1,53 +1,58 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1200">
-<title>ModelSpend launch card</title>
+<title>ModelSpend 0.8.0b1 launch card</title>
 <style>
-:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#6f6d68;--hair:rgba(11,11,11,.12);--s1:#2a78d6;--s2:#1baf7a;--panel:#f4f3ef}
+:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#6f6d68;--hair:rgba(11,11,11,.12);--s1:#2a78d6;--panel:#f4f3ef}
 *{box-sizing:border-box;margin:0}
 html,body{width:1200px;height:1200px;background:var(--surface);color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
 .card{width:1200px;height:1200px;padding:76px 84px 64px;display:flex;flex-direction:column}
 .top{display:flex;justify-content:space-between;align-items:baseline;font-size:26px}
 .top b{font-weight:700;letter-spacing:-.01em;font-size:30px}.top span{color:var(--muted)}
-h1{font-size:70px;line-height:1.06;letter-spacing:-.025em;font-weight:700;margin-top:40px;max-width:1010px}
-.sub{font-size:30px;line-height:1.35;color:var(--ink2);margin-top:20px;max-width:960px}
-.panel{background:var(--panel);border:1px solid var(--hair);border-radius:18px;padding:28px 44px 28px;margin-top:34px;margin-bottom:30px}
-.kicker{font-size:23px;color:var(--ink2)}
-.hero{display:flex;align-items:baseline;gap:22px;margin-top:6px}
-.hero .n{font-size:148px;line-height:1;font-weight:800;letter-spacing:-.04em}
-.hero .l{font-size:34px;font-weight:600;color:var(--ink)}
-.barlabel{display:flex;justify-content:space-between;font-size:24px;color:var(--ink2);margin:18px 0 10px}
-.bar{display:flex;gap:2px;height:46px}
-.bar i{display:block;height:100%}
-.bar .keep{background:var(--s1);flex:0 0 52px;border-radius:4px 0 0 4px}
-.bar .save{background:var(--s2);flex:1 1 auto;border-radius:0 4px 4px 0}
-.legend{display:flex;justify-content:space-between;margin-top:14px;font-size:25px}
-.legend div{display:flex;align-items:center;gap:12px}.legend em{font-style:normal;color:var(--ink2)}.legend b{font-weight:700;font-variant-numeric:tabular-nums}
-.k{display:inline-block;width:18px;height:18px;border-radius:4px}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:24px}
-.stat{border-top:2px solid var(--hair);padding-top:14px}
-.stat b{display:block;font-size:46px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.stat span{font-size:22px;color:var(--ink2)}
-.foot{margin-top:auto;font-size:21px;line-height:1.4;color:var(--muted)}
+h1{font-size:68px;line-height:1.06;letter-spacing:-.025em;font-weight:700;margin-top:38px;max-width:1010px}
+.sub{font-size:30px;line-height:1.35;color:var(--ink2);margin-top:18px;max-width:980px}
+.panel{background:var(--panel);border:1px solid var(--hair);border-radius:18px;padding:26px 40px 26px;margin-top:30px;margin-bottom:26px}
+.kicker{font-size:22px;color:var(--ink2)}
+.hero{display:flex;align-items:baseline;gap:20px;margin-top:4px}
+.hero .n{font-size:128px;line-height:1;font-weight:800;letter-spacing:-.04em}
+.hero .l{font-size:30px;font-weight:600;max-width:560px;line-height:1.2}
+.rows{margin-top:14px}
+.row{display:grid;grid-template-columns:206px 1fr 98px 214px;gap:14px;align-items:center;height:44px;font-size:23px}
+.row .m{color:var(--ink)}
+.row .track{display:block;height:20px}
+.row .track i{display:block;height:100%;background:var(--s1);border-radius:0 4px 4px 0;min-width:3px}
+.row .v{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.row .e{color:var(--muted);font-size:21px}.row .e.has{color:var(--ink);font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:20px}
+.stat{border-top:2px solid var(--hair);padding-top:12px}
+.stat b{display:block;font-size:42px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.stat span{font-size:21px;color:var(--ink2)}
+.foot{margin-top:auto;font-size:20px;line-height:1.4;color:var(--muted)}
 .foot p+p{margin-top:8px}.foot b{color:var(--ink2);font-weight:600}
 </style></head><body>
 <div class="card">
   <div class="top"><b>ModelSpend</b><span>Open source · Apache-2.0</span></div>
-  <h1>Which cheaper model is safe for your traffic?</h1>
-  <p class="sub">It tries a sample of your real requests on cheaper models in the background, and shows you the evidence.</p>
-  <section class="panel" aria-label="Ticket classification: spend now and projected saving">
-    <div class="kicker">Support-ticket classification: gpt-4.1 vs gpt-4.1-nano, a live test on OpenAI</div>
-    <div class="hero"><span class="n">95%</span><span class="l">projected saving</span></div>
-    <div class="barlabel"><span>Spend now: gpt-4.1</span><b style="color:var(--ink);font-weight:700">$0.0045</b></div>
-    <div class="bar" role="img" aria-label="Spend now $0.0045: would still cost $0.0002, projected saving $0.0043"><i class="keep"></i><i class="save"></i></div>
-    <div class="legend"><div><span class="k" style="background:var(--s1)"></span><em>Would still cost</em> <b>$0.0002</b></div><div><span class="k" style="background:var(--s2)"></span><em>Projected saving</em> <b>$0.0043</b></div></div>
+  <h1>What would the same tokens cost on other models?</h1>
+  <p class="sub">Price your own usage on every model in your catalog, then let evidence decide which ones are safe.</p>
+  <section class="panel" aria-label="The same tokens priced on seven models">
+    <div class="kicker">My own usage: 92 calls, 94,685 input and 11,213 output tokens, priced on 7 models</div>
+    <div class="hero"><span class="n">108x</span><span class="l">price spread for identical tokens</span></div>
+    <div class="rows" role="list">
+      <div class="row" role="listitem"><span class="m">gpt-4.1-nano</span><span class="track"><i style="width:0.93%"></i></span><span class="v">$0.0140</span><span class="e has">57/57 passed</span></div>
+      <div class="row" role="listitem"><span class="m">claude-haiku-5-5</span><span class="track"><i style="width:1.0%"></i></span><span class="v">$0.0151</span><span class="e">unmeasured</span></div>
+      <div class="row" role="listitem"><span class="m">gpt-5-mini</span><span class="track"><i style="width:3.06%"></i></span><span class="v">$0.0461</span><span class="e has">29/55: below the bar</span></div>
+      <div class="row" role="listitem"><span class="m">gpt-4.1</span><span class="track"><i style="width:18.5%"></i></span><span class="v">$0.28</span><span class="e">unmeasured</span></div>
+      <div class="row" role="listitem"><span class="m">claude-sonnet-5-5</span><span class="track"><i style="width:20%"></i></span><span class="v">$0.30</span><span class="e">unmeasured</span></div>
+      <div class="row" role="listitem"><span class="m">claude-opus-5-5</span><span class="track"><i style="width:40%"></i></span><span class="v">$0.60</span><span class="e">unmeasured</span></div>
+      <div class="row" role="listitem"><span class="m">claude-fable-5-1</span><span class="track"><i style="width:100%"></i></span><span class="v">$1.51</span><span class="e">unmeasured</span></div>
+    </div>
     <div class="stats">
-      <div class="stat"><b>57 of 57</b><span>scored comparisons passed</span></div>
-      <div class="stat"><b>0.94</b><span>95% lower bound on the pass rate</span></div>
-      <div class="stat"><b>$0.0073</b><span>total spent on the testing</span></div>
+      <div class="stat"><b>$0.0201</b><span>what I actually spent</span></div>
+      <div class="stat"><b>$0.0156</b><span>moved only where evidence is</span></div>
+      <div class="stat"><b>1 of 7</b><span>clears an evidence bar</span></div>
     </div>
   </section>
   <div class="foot">
-    <p><b>A small test:</b> 30 easy ticket classifications, run twice. It shows the mechanism works, not what your bill will do. “Passed” means as good as the answer you used, not correct.</p>
-    <p>Source: my live run, 17 Oct 2026, ModelSpend 0.7.0b1 · github.com/rmencke2/modelspend</p>
+    <p><b>A small test:</b> my own test traffic, mostly classification. Price says nothing about quality: “passed” means as good as the answer I used, not correct, and five of these models are unmeasured.</p>
+    <p>Source: my usage ledger, 20 Oct 2026, ModelSpend 0.8.0b1 · github.com/rmencke2/modelspend</p>
   </div>
 </div>
 </body></html>
