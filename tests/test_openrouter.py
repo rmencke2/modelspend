@@ -331,3 +331,30 @@ def test_an_oversized_response_stops_being_read_instead_of_filling_memory(monkey
     with pytest.raises(orr.OpenRouterError, match="refusing to read it"):
         orr.fetch("https://x.test/api/v1", None, client=client)
     assert len(read) < 10  # it gave up after a few chunks, not after all 1000
+
+
+# ---- ':batch' variants: seen in the live list (2026-10-20), each at exactly half the usual price ----
+BATCH = {"data": [model("openai/gpt-4.1", prompt="0.000002", completion="0.000008"), model("openai/gpt-4.1:batch", prompt="0.000001", completion="0.000004")]}
+
+
+def test_batch_variants_are_skipped_with_a_reason_unless_asked_for():
+    entries, _ = orr.parse(BATCH)
+    assert {e.id for e in entries if e.batch} == {"openai/gpt-4.1:batch"}
+    got, left = orr.select(entries, ["gpt-4.1"])
+    assert [e.id for e in got] == ["openai/gpt-4.1"]
+    assert left[0].id == "openai/gpt-4.1:batch" and "batch-priced" in left[0].reason and "--include-batch" in left[0].reason
+    assert [e.id for e in orr.select(entries, ["gpt-4.1"], include_batch=True)[0]] == ["openai/gpt-4.1", "openai/gpt-4.1:batch"]
+    assert not next(e for e in entries if e.id == "openai/gpt-4.1").batch
+
+
+def test_the_cli_does_not_list_batch_variants_unless_asked(env):
+    _, saved = env
+    f = saved.parent / "batch.json"
+    f.write_text(json.dumps(BATCH))
+    plain = cli("catalog", "import-openrouter", "--file", str(f), "--only", "gpt-4.1")
+    assert plain.exit_code == 0 and "openrouter/openai/gpt-4.1 " in plain.output and not [ln for ln in plain.output.splitlines() if ln.startswith(("add", "update")) and ":batch" in ln]
+    assert "not imported (1)" in plain.output and "batch-priced" in plain.output  # said out loud, not silently dropped
+    withb = cli("catalog", "import-openrouter", "--file", str(f), "--only", "gpt-4.1", "--include-batch")
+    assert "openrouter/openai/gpt-4.1:batch" in withb.output
+    only_b = cli("catalog", "import-openrouter", "--file", str(f), "--only", "gpt-4.1:batch")
+    assert only_b.exit_code == 0 and "no matching models" in only_b.output and "batch-priced" in only_b.output

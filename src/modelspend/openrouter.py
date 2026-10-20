@@ -42,6 +42,7 @@ class Entry:
     cached_per_mtok: float | None = None
     cache_write_per_mtok: float | None = None
     free: bool = False
+    batch: bool = False  # an id ending in ':batch': half price, apparently batch-mode; not safe to route a live request to
     deprecated: bool = False
     capabilities: dict[str, bool] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -162,18 +163,20 @@ def parse(payload: dict) -> tuple[list[Entry], list[Skip]]:
         entries.append(Entry(
             id=mid, name=name, context=ctx, max_output=_pos_int(top.get("max_completion_tokens")), input_per_mtok=inp, output_per_mtok=out,
             cached_per_mtok=_per_mtok(pr.get("input_cache_read")), cache_write_per_mtok=_per_mtok(pr.get("input_cache_write")),
-            free=mid.endswith(":free") or (inp == 0 and out == 0), deprecated=bool(m.get("expiration_date")), capabilities=caps, warnings=warnings))
+            free=mid.endswith(":free") or (inp == 0 and out == 0), batch=mid.endswith(":batch"), deprecated=bool(m.get("expiration_date")), capabilities=caps, warnings=warnings))
     return entries, skips
 
 
-def select(entries: list[Entry], only: list[str], exact: bool = False, include_free: bool = False, min_context: int = 0) -> tuple[list[Entry], list[Skip]]:
+def select(entries: list[Entry], only: list[str], exact: bool = False, include_free: bool = False, min_context: int = 0, include_batch: bool = False) -> tuple[list[Entry], list[Skip]]:
     """The models you asked for (substring match on the id, or the whole id with exact). Free-tier models only when you ask for them."""
     picked: list[Entry] = []
     left: list[Skip] = []
     for e in entries:
         if only and not any((o == e.id.lower()) if exact else (o in e.id.lower()) for o in only):
             continue
-        if e.free and not include_free:
+        if e.batch and not include_batch:
+            left.append(Skip(e.id, "batch-priced variant (exactly the usual price halved, apparently asynchronous): not safe to send a live request to; add --include-batch to import it"))
+        elif e.free and not include_free:
             left.append(Skip(e.id, "free-tier model: rate limited and may be logged by the provider; add --include-free to import it"))
         elif min_context and (e.context or 0) < min_context:
             left.append(Skip(e.id, f"context length below {min_context}"))

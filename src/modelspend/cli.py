@@ -1079,6 +1079,7 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
 def catalog_import_openrouter(
         only: str = typer.Option("", help="Comma-separated model id substrings to import, e.g. --only claude-sonnet,gpt-4.1,llama-3.3. Needed unless --refresh: the list has hundreds of models."),
         exact: bool = typer.Option(False, "--exact", help="Match --only against whole model ids."),
+        include_batch: bool = typer.Option(False, "--include-batch", help="Also import ':batch' variants (half price, apparently asynchronous: do not route live requests to them)."),
         include_free: bool = typer.Option(False, "--include-free", help="Also import free-tier (':free') models: they are rate limited and may be logged by the provider."),
         min_context: int = typer.Option(0, help="Skip models with a shorter context window than this many tokens."),
         default_max_output: Optional[int] = typer.Option(None, help="Output limit to use for models whose listing does not state one (from the provider's docs)."),
@@ -1110,7 +1111,7 @@ def catalog_import_openrouter(
         for mid in missing:
             typer.echo(f"note: {mid} is no longer in OpenRouter's usable list (removed, renamed or no longer priced per token); left as it is")
     else:
-        picked, left = orr.select(entries, only_l, exact, include_free, min_context)
+        picked, left = orr.select(entries, only_l, exact, include_free, min_context, include_batch)
     if not picked:
         typer.echo("no matching models" + (" (" + "; ".join(f"{s.id}: {s.reason}" for s in left[:3]) + ")" if left else "")
                    + f". {len(entries)} usable models in the list; try a shorter --only.")
