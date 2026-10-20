@@ -66,7 +66,8 @@ class ProviderAdapter(ABC):
 
 
 # Account has no credit / hit a spending cap: retrying the same provider cannot help (unlike a transient 429).
-_QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exceeded your current quota", "billing_hard_limit")
+_QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exceeded your current quota", "billing_hard_limit",
+                  "insufficient balance", "insufficient_balance")  # the last two: DeepSeek answers HTTP 402 "Insufficient Balance" when the account has no credit
 
 
 def classify_exception(provider: str, exc: BaseException) -> ProviderError:
@@ -80,7 +81,7 @@ def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     msg = scrub(str(exc))[:300]  # scrub BEFORE truncating, so a cut can never leave half a key behind
     low = name.lower()
     text = msg.lower()
-    if any(m in text for m in _QUOTA_MARKERS):
+    if any(m in text for m in _QUOTA_MARKERS) or status == 402:  # 402 Payment Required: no credit, so another provider may succeed but retrying this one cannot
         kind = "quota"
     elif "timeout" in low or "timedout" in low:
         kind = "timeout"

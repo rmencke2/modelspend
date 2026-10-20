@@ -93,7 +93,7 @@ Routing, budgets, per-project reports, shadow evaluation, savings and reconcilia
 
 ## Verifying DeepSeek (needs your own key)
 
-Nothing about DeepSeek has been confirmed against the live API yet: the preset follows its documented address, `max_tokens` parameter and cache fields (`prompt_cache_hit_tokens`) and is tested against fakes. A full rehearsal of the commands below against a local fake with DeepSeek's documented quirks (late-built cache, HTTP 400 for an unknown model) passes, which proves the procedure, not DeepSeek. To check the real thing, create an API key on DeepSeek's platform (add a small balance if it asks: the check costs a fraction of a cent), then:
+**Checked live so far (2026-10-20):** the key works, `/models` lists `deepseek-flash` and `deepseek-v4-pro` (not the model names older documentation uses), and `catalog sync --add-new` added them. Every generation then failed with HTTP 402 "Insufficient Balance" (an account with no credit), which exposed and fixed a classification bug (see the changelog); **generation, streaming, usage fields and the cache are still unverified until the account has credit.** The preset follows its documented address, `max_tokens` parameter and cache fields (`prompt_cache_hit_tokens`) and is tested against fakes. A full rehearsal of the commands below against a local fake with DeepSeek's documented quirks (late-built cache, HTTP 400 for an unknown model) passes, which proves the procedure, not DeepSeek. To check the real thing, create an API key on DeepSeek's platform (add a small balance if it asks: the check costs a fraction of a cent), then:
 
 ```
 modelspend keys set deepseek       # paste the key when asked; it is not echoed

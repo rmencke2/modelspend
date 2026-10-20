@@ -112,6 +112,24 @@ def test_an_unknown_model_error_must_be_normalized():
     assert by(run(Fake(unknown="accept")))["errors"].status == "fail"
 
 
+def test_an_account_problem_makes_the_error_check_inconclusive_and_an_unclassified_error_shows_what_the_provider_said():
+    for kind in ("quota", "auth", "rate_limit"):
+        c = by(run(Fake(unknown=kind)))["errors"]
+        assert c.status == "skip" and "account reasons" in c.detail and kind in c.detail  # not the adapter's fault, so not a FAIL or WARN
+    w = by(run(Fake(unknown="unknown")))["errors"]
+    assert w.status == "warn" and "model not found" in w.detail and "HTTP" in w.detail  # enough to diagnose without a debugger
+
+
+def test_a_failed_call_on_an_empty_account_says_it_is_the_account():
+    class Broke(Fake):
+        async def generate(self, req):
+            if req.model == "modelspend-verify-no-such-model":
+                return await super().generate(req)
+            raise ProviderError("openai", "quota", "Insufficient Balance", 402)
+    r = run(Broke())
+    assert by(r)["generate"].status == "fail" and "out of credit" in by(r)["generate"].detail and "not an adapter problem" in by(r)["generate"].detail
+
+
 def test_a_cut_off_reply_is_a_warning_not_a_failure():
     r = by(run(Fake(finish="length")))["generate"]
     assert r.status == "warn" and "more room" in r.detail

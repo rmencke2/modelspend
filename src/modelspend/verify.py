@@ -79,7 +79,9 @@ def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None
 
 
 def _err(e: BaseException) -> str:
-    return f"{getattr(e, 'kind', type(e).__name__)}: {str(getattr(e, 'message', e))[:100]}"
+    kind = getattr(e, "kind", type(e).__name__)
+    hint = " (the account is out of credit or at a spending limit: that is for you to fix, not an adapter problem)" if kind == "quota" else ""
+    return f"{kind}: {str(getattr(e, 'message', e))[:100]}{hint}"
 
 
 def _total(u: Usage) -> int:
@@ -124,7 +126,12 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         await adapter.generate(ProviderRequest(model="modelspend-verify-no-such-model", messages=[Message(role="user", content="hi")], max_output_tokens=8, timeout_s=30.0))
         add("errors", "fail", "an unknown model name was accepted: the provider (or its adapter) may be routing it somewhere else")
     except ProviderError as e:
-        add("errors", "warn" if e.kind == "unknown" else "ok", f"unknown model -> {e.kind}" + (" (not classified: failover may treat it wrongly)" if e.kind == "unknown" else ""))
+        if e.kind in ("quota", "auth", "rate_limit"):  # refused before the model was even looked at: this says nothing about how model errors are classified
+            add("errors", "skip", f"inconclusive: the provider refused for account reasons ({e.kind}) before looking at the model; fix that and run again")
+        elif e.kind == "unknown":
+            add("errors", "warn", f"unknown model -> unknown (not classified: failover may treat it wrongly). The provider said: HTTP {e.status_code}, {e.message[:100]}")
+        else:
+            add("errors", "ok", f"unknown model -> {e.kind}")
     except Exception as e:  # noqa: BLE001
         add("errors", "fail", f"an SDK error leaked past the adapter unclassified ({type(e).__name__}): the router cannot react to it")
     # 3. generate

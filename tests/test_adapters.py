@@ -119,6 +119,16 @@ async def test_error_normalization():
     assert classify_exception("x", type("APITimeoutError", (Exception,), {})("t")).kind == "timeout"
 
 
+def test_no_credit_is_a_quota_error_whatever_wording_the_provider_uses():
+    """Found live (DeepSeek, 2026-10-20): HTTP 402 'Insufficient Balance' was classified 'unknown', which does not fail over to another provider."""
+    e402 = type("APIStatusError", (Exception,), {"status_code": 402})("Error code: 402 - {'error': {'message': 'Insufficient Balance'}}")
+    k = classify_exception("deepseek", e402)
+    assert k.kind == "quota" and k.status_code == 402 and k.kind in ProviderError.FAILOVER and not k.retryable
+    assert classify_exception("x", type("E", (Exception,), {"status_code": 402})("pay up")).kind == "quota"  # the status alone is enough
+    assert classify_exception("x", type("E", (Exception,), {"status_code": 400})("Insufficient Balance")).kind == "quota"  # and so is the wording alone
+    assert classify_exception("x", type("E", (Exception,), {"status_code": 400})("model not found")).kind == "bad_request"  # nothing else changed
+
+
 def test_api_key_never_in_repr_or_error():
     a = OpenAICompatAdapter("sk-SECRET-123", client=FakeOpenAI(exc=Exception("boom")))
     assert "SECRET" not in repr(a)
