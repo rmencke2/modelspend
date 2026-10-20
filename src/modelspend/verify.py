@@ -159,7 +159,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         elif gen_usage and gen_usage.input_tokens and abs(_total(end.usage) - _total(gen_usage)) > max(5, 0.2 * _total(gen_usage)):
             add("stream", "warn", f"streamed input tokens ({_total(end.usage)}) differ from the same call not streamed ({_total(gen_usage)})")
         else:
-            add("stream", "ok", f"{end.usage.input_tokens} in, {end.usage.output_tokens} out, text {'received' if text.strip() else 'EMPTY'}")
+            add("stream", "ok", f"{end.usage.input_tokens} in + {end.usage.cache_read_tokens} cached, {end.usage.output_tokens} out, text {'received' if text.strip() else 'EMPTY'}")
     except Exception as e:  # noqa: BLE001
         add("stream", "fail", _err(e))
     # 5. structured output, only where the catalog claims it

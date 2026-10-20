@@ -153,3 +153,13 @@ def test_cli_asks_first_runs_and_exits_nonzero_on_a_failure(tmp_path, monkeypatc
     out = CliRunner().invoke(app, ["verify", "openai"], input="n\n")
     assert out.exit_code == 1 and "Go ahead?" in out.output and "Most it can cost" in out.output and "sk-test-not-real" not in out.output
     assert CliRunner().invoke(app, ["verify", "nonsense", "--yes"]).exit_code != 0
+
+
+def test_the_stream_line_shows_cached_tokens_so_a_cache_split_is_not_mistaken_for_missing_input():
+    class Cached(Fake):
+        async def stream(self, req):
+            r = await self.generate(req)
+            yield StreamChunk(text=r.text)
+            yield StreamEnd(response=r.model_copy(update={"usage": Usage(input_tokens=1, cache_read_tokens=11, output_tokens=3)}))
+    c = by(run(Cached()))["stream"]
+    assert c.status == "ok" and "1 in + 11 cached" in c.detail  # 12 in total, the same as the non-streamed call
