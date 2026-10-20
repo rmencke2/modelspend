@@ -127,7 +127,7 @@ It asks first, shows the most it can cost (a fraction of a cent: tiny prompts, t
 | structured | a JSON-schema reply parses (only if your catalog says the model supports it) |
 | cache (`--cache`) | the same ~1,500-token prompt twice: uncached + cached tokens add up the same both times, so cached tokens are counted once |
 
-A **FAIL** means a number ModelSpend shows for that provider would be wrong; a **WARN** means it would be incomplete or needs a look; **skip** means the check could not run or was inconclusive (a provider that does not cache automatically skips the cache check). The calls go straight to the provider and are not recorded in your ledger, so a usage export for that day will show a few requests ModelSpend did not record. The report holds model ids, counts and error kinds, never keys or prompts: paste it into an issue.
+A **FAIL** means a number ModelSpend shows for that provider would be wrong (a provider that refuses because the account has no credit, or is rate limited, is shown as **NOT VERIFIED** instead: nothing was learned); a **WARN** means it would be incomplete or needs a look; **skip** means the check could not run or was inconclusive (a provider that does not cache automatically skips the cache check). The calls go straight to the provider and are not recorded in your ledger, so a usage export for that day will show a few requests ModelSpend did not record. The report holds model ids, counts and error kinds, never keys or prompts: paste it into an issue.
 
 ## Not verified yet
 

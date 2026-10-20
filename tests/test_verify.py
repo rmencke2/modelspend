@@ -120,14 +120,37 @@ def test_an_account_problem_makes_the_error_check_inconclusive_and_an_unclassifi
     assert w.status == "warn" and "model not found" in w.detail and "HTTP" in w.detail  # enough to diagnose without a debugger
 
 
-def test_a_failed_call_on_an_empty_account_says_it_is_the_account():
-    class Broke(Fake):
-        async def generate(self, req):
-            if req.model == "modelspend-verify-no-such-model":
-                return await super().generate(req)
-            raise ProviderError("openai", "quota", "Insufficient Balance", 402)
-    r = run(Broke())
-    assert by(r)["generate"].status == "fail" and "out of credit" in by(r)["generate"].detail and "not an adapter problem" in by(r)["generate"].detail
+class Broke(Fake):
+    """An account that cannot be charged (DeepSeek answers HTTP 402 'Insufficient Balance'), or is rate limited."""
+    kind, status = "quota", 402
+
+    async def generate(self, req):  # refuses everything, the unknown-model probe included: the balance is checked before the model is looked at
+        raise ProviderError("openai", self.kind, "Insufficient Balance", self.status)
+
+    async def stream(self, req):
+        raise ProviderError("openai", self.kind, "Insufficient Balance", self.status)
+        yield  # pragma: no cover
+
+
+def test_an_empty_account_is_blocked_not_failed_so_it_does_not_look_like_an_adapter_fault():
+    r = run(Broke(), cache=True)
+    for name in ("generate", "stream", "cache"):
+        c = by(r)[name]
+        assert c.status == "skip" and c.detail.startswith("blocked, not verified") and "out of credit" in c.detail and "not an adapter problem" in c.detail
+    assert r.status == "skip" and by(r)["errors"].status == "skip"  # nothing was learned, so it is neither PASS nor FAIL
+    t = to_table([r])
+    assert "NOT VERIFIED" in t and "FAIL" not in t and "PASS  " in t.split("key")[1].split("\n")[0]  # the key check itself did pass
+
+
+def test_rate_limits_are_blocked_too_but_a_real_adapter_failure_is_still_a_failure():
+    rl = Broke()
+    rl.kind, rl.status = "rate_limit", 429
+    r = run(rl)
+    assert by(r)["generate"].status == "skip" and "rate limited" in by(r)["generate"].detail and r.status == "skip"
+    server = Broke()
+    server.kind, server.status = "server", 500
+    r2 = run(server)
+    assert by(r2)["generate"].status == "fail" and r2.status == "fail"  # a 500 is evidence about the provider, not about the account
 
 
 def test_a_cut_off_reply_is_a_warning_not_a_failure():

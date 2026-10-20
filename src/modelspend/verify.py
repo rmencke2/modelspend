@@ -53,7 +53,8 @@ class ProviderReport:
     @property
     def status(self) -> str:
         worst = max((c.status for c in self.checks), key=lambda s: STATUS_ORDER[s], default="skip")
-        return "skip" if worst == "ok" and self.model is None else worst  # only the key was checked: nothing about this provider was verified
+        blocked = self.model is None or any(c.name in ("generate", "stream") and c.status == "skip" for c in self.checks)
+        return "skip" if worst == "ok" and blocked else worst  # only the key was checked (or the account refused the calls): nothing about this provider was verified
 
 
 def pick_model(catalog: Catalog, provider: str, visible: set[str] | None = None, explicit: str | None = None) -> Model | None:
@@ -78,10 +79,21 @@ def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None
                            reasoning_in_output=model.pricing.reasoning_in_output if model.pricing else True)
 
 
+BLOCKING = ("quota", "rate_limit")  # the provider refused for account reasons: nothing is learned about the adapter either way
+
+
 def _err(e: BaseException) -> str:
     kind = getattr(e, "kind", type(e).__name__)
-    hint = " (the account is out of credit or at a spending limit: that is for you to fix, not an adapter problem)" if kind == "quota" else ""
+    hint = {"quota": " (the account is out of credit or at a spending limit: that is for you to fix, not an adapter problem)",
+            "rate_limit": " (rate limited: wait a minute and run it again)"}.get(kind, "")
     return f"{kind}: {str(getattr(e, 'message', e))[:100]}{hint}"
+
+
+def _fail(e: BaseException) -> tuple[str, str]:
+    """(status, detail) for a call that raised. An account refusal is 'skip' (blocked), not 'fail': FAIL is reserved for 'a number would be wrong'."""
+    if getattr(e, "kind", None) in BLOCKING:
+        return "skip", "blocked, not verified: " + _err(e)
+    return "fail", _err(e)
 
 
 def _total(u: Usage) -> int:
@@ -159,7 +171,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         else:
             add("generate", "ok", facts)
     except Exception as e:  # noqa: BLE001
-        add("generate", "fail", _err(e))
+        add("generate", *_fail(e))
     # 4. stream
     try:
         text, end = "", None
@@ -177,7 +189,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         else:
             add("stream", "ok", f"{end.usage.input_tokens} in + {end.usage.cache_read_tokens} cached, {end.usage.output_tokens} out, text {'received' if text.strip() else 'EMPTY'}")
     except Exception as e:  # noqa: BLE001
-        add("stream", "fail", _err(e))
+        add("stream", *_fail(e))
     # 5. structured output, only where the catalog claims it
     if m.capabilities.structured_output:
         try:
@@ -188,7 +200,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
                 ok = False
             add("structured", "ok" if ok else "fail", "reply parsed and matched the schema" if ok else f"the catalog says {m.ref} supports structured output, but the reply was not the schema's JSON")
         except Exception as e:  # noqa: BLE001
-            add("structured", "fail", _err(e))
+            add("structured", *_fail(e))
     else:
         add("structured", "skip", "the catalog does not claim structured output for this model")
     # 6. cached-token accounting (opt in: ~3,000 input tokens)
@@ -209,7 +221,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
                 add("cache", "ok", f"repeat: {b.input_tokens} uncached + {b.cache_read_tokens} cached = {_total(b)}, first call {_total(a)}: counted once"
                    + (f" (the cache was only there after a {CACHE_RETRY_WAIT_S:g} s wait)" if waited else ""))
         except Exception as e:  # noqa: BLE001
-            add("cache", "fail", _err(e))
+            add("cache", *_fail(e))
     return rep
 
 
@@ -229,7 +241,7 @@ MARK = {"ok": "PASS", "warn": "WARN", "fail": "FAIL", "skip": "skip"}
 def to_table(reports: list[ProviderReport]) -> str:
     lines = []
     for r in reports:
-        lines.append(f"{r.provider}  {r.model or '-'}  =>  {MARK[r.status]}")
+        lines.append(f"{r.provider}  {r.model or '-'}  =>  {MARK[r.status] if r.status != 'skip' else 'NOT VERIFIED'}")
         lines += [f"   {c.name:<11}{MARK[c.status]:<5} {c.detail}" for c in r.checks]
         lines.append("")
     return "\n".join(lines).rstrip()
