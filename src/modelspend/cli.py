@@ -629,6 +629,32 @@ def savings(since: str = typer.Option("30d", help="Window for your spend: 7d, 24
     typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep))
 
 
+@app.command()
+def whatif(since: str = typer.Option("30d", help="Window for your traffic: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+           profile: str = typer.Option("balanced", help="Judge the evidence against this profile's bars."),
+           project: Optional[str] = typer.Option(None, help="Only this project's traffic."),
+           only: Optional[list[str]] = typer.Option(None, help="Only models whose name contains this (repeatable), e.g. --only gpt-4.1 --only claude."),
+           provider: Optional[list[str]] = typer.Option(None, help="Only this provider (repeatable)."),
+           show_all: bool = typer.Option(False, "--all", help="Show every model, not the cheapest 15."),
+           fmt: str = typer.Option("table", "--format", help="table or json.")):
+    """What the tokens you already used would have cost on each model in your catalog (same tokens, catalog prices; not a quality claim)."""
+    from .catalog import Catalog
+    from .report import parse_since
+    from .whatif import build_whatif, to_table
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format must be table or json")
+    if profile not in ("economy", "balanced", "high_assurance"):
+        raise typer.BadParameter("--profile must be economy, balanced or high_assurance")
+    cfg = Config.from_env()
+    try:
+        rep = build_whatif(_store(), Catalog.from_config(cfg), cfg, profile=profile, since=parse_since(since), project=project,
+                           only=[o.lower() for o in only or []], providers=[registry.normalize(p) for p in provider or []])
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep, top=10_000 if show_all else 15))
+
+
 @reconcile_app.command("import")
 def reconcile_import(file: Path = typer.Argument(..., help="Usage export from the provider: CSV, JSON or JSON lines."),
                      provider: Optional[str] = typer.Option(None, help="openai, anthropic, google, xai, deepseek or one you defined (or put a 'provider' column in the file)."),

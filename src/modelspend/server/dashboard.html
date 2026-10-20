@@ -104,6 +104,9 @@ details.tv summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:8px
 <div class="chart"><div class="legend" aria-label="Legend"><span><i style="background:var(--s1)"></i>Would still cost</span><span><i style="background:var(--s3)"></i>Projected saving</span></div><div id="s-bars"></div></div>
 <h2>Evidence by task type</h2><div class="wrap"><table id="s-tbl"></table></div>
 <p class="note" id="s-notes"></p>
+<h2>What the same tokens would have cost</h2>
+<p class="note" id="w-note">Your recorded tokens priced on each model in your catalog. Same tokens, catalog prices: it says nothing about quality, so read it with the evidence column.</p>
+<div class="wrap"><table id="w-tbl"></table></div>
 <h2>Shadow evaluation</h2>
 <div class="card" id="s-shadow">
 <p class="note" id="s-sstate"></p>
@@ -288,11 +291,16 @@ function savingsTable(el,rows){const head='<tr><th>Task</th><th class="n">Spend 
    <td class="n">${p?p.passes+'/'+p.n:'-'}</td><td class="n">${p&&p.lower_bound!=null?p.lower_bound.toFixed(2):'-'}</td>
    <td class="n">${p&&p.cost_ratio!=null?((p.cost_ratio-1)*100>0?'+':'')+Math.round((p.cost_ratio-1)*100)+'%':'-'}</td>
    <td class="n">${b?esc(usd(b.projected_saving_usd))+' ('+(r.cost?Math.round(100*b.projected_saving_usd/r.cost):0)+'%)':'-'}</td></tr>`}).join('')||'<tr><td>No data yet</td></tr>')}
+function whatifTable(el,w){const head='<tr><th>Model</th><th class="n">Would cost</th><th class="n">vs actual</th><th class="n">Evidence</th><th>Clears the bar for</th><th>Notes</th></tr>';
+ el.innerHTML=head+(w.rows.slice(0,15).map(r=>{const nt=[r.used?'you used it':'',r.too_large?n0(r.too_large)+' call(s) exceed its context':'',r.over_output_cap?n0(r.over_output_cap)+' call(s) exceed its output cap':''].filter(Boolean).join('; ');
+  return `<tr><td>${esc(short(r.model))} <span class="sv-need">${esc(r.model.split('/')[0])}</span></td><td class="n">${esc(usd(r.cost))}</td><td class="n">${r.ratio!=null?((r.ratio-1)*100>0?'+':'')+Math.round((r.ratio-1)*100)+'%':'-'}</td>
+   <td class="n">${r.evidence_n?r.evidence_passes+'/'+r.evidence_n:'unmeasured'}</td><td>${esc(r.clears.join(', ')||'-')}</td><td>${esc(nt)}</td></tr>`}).join('')||'<tr><td>No data yet</td></tr>')}
 async function loadSavings(){const root=$('savings');root.classList.add('loading');
  try{const [s,sh]=await Promise.all([api('/v1/savings?since='+SV.win),api('/v1/shadow')]);const T=s.totals,ready=T.categories_ready;
   $('s-hero').innerHTML=esc(usd(T.projected_saving_usd))+'<small>'+(ready?'projected saving ('+Math.round(100*T.projected_saving_pct)+'% of spend), in '+ready+' of '+T.categories+' task types':'no task type has enough evidence yet')+'</small>';
   $('s-tiles').innerHTML=[['Spend in window',usd(T.cost)],['Task types ready',ready+' of '+T.categories],['Shadow spend this month',usd(T.shadow_spend_this_month)+' of '+usd(T.shadow_budget)],
    ['Scored comparisons',n0(sh.comparisons.reduce((a,c)=>a+c.n,0))]].map(x=>`<div class="tile"><b>${esc(x[1])}</b><span>${esc(x[0])}</span></div>`).join('');
+  try{const w=await api('/v1/whatif?since='+SV.win);whatifTable($('w-tbl'),w);$('w-note').textContent=w.calls?'Your '+n0(w.calls)+' billed calls ('+n0(w.tokens.input+w.tokens.cache_read+w.tokens.cache_write)+' input, '+n0(w.tokens.output)+' output tokens) priced on each model, cheapest first (top 15). '+w.notes.slice(0,2).join(' '):'No calls recorded in this window.'}catch(e){$('w-note').textContent='Could not load the price table ('+e.message+').'}
   savingsBars($('s-bars'),s.rows);savingsTable($('s-tbl'),s.rows);$('s-notes').textContent=s.notes.join(' ');
   const S=sh.settings;$('s-sstate').textContent=(sh.active?'ON: ':'OFF: ')+Math.round(S.sample_rate*100)+'% of eligible requests sampled, up to '+S.max_candidates+' cheaper model(s) each, judge '+(S.judge?'on':'off')+
    ', routing uses shadow evidence: '+(S.use_as_evidence?'yes':'no')+'.';

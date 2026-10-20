@@ -42,6 +42,8 @@ A candidate that is **cut off at the output cap** on the request is **not counte
 
 ## The savings report
 
+`modelspend whatif` is the price-only companion: your recorded tokens priced on every model in the catalog, cheapest first, with the shadow evidence beside each price. It assumes the same tokens on every model and makes no quality claim; models with no evidence read `unmeasured`.
+
 `modelspend savings` (and `GET /v1/savings`) shows, per task type: your spend in the window, the cheapest model that **clears the bar** on shadow evidence, how many comparisons it passed, the 95% lower bound, its measured cost relative to the model you use, and the projected saving. A model is only called *ready* when the **same bar routing uses** (your thresholds, else the profile's) is met by the 95% **Wilson lower bound** of its pass rate: a few lucky samples never qualify. Everything else shows what is missing ("needs 6 more", "below the bar").
 
 The saving is a **projection**: your recorded spend in that task type (excluding spend already on the candidate) scaled by the cost ratio measured on the sampled requests (reported tokens, catalog prices). It assumes the sampled requests are typical of what would move. Prices and traffic change.

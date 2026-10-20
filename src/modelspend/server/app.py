@@ -380,6 +380,25 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
         except ReportError as e:
             raise InvalidRequest(str(e), param="since")
 
+    @app.get("/v1/whatif", dependencies=[Depends(auth), Depends(host_guard)])
+    async def whatif_view(request: Request):
+        """What your recorded tokens would have cost on each model in the catalog (`?since=30d&profile=balanced&project=&only=a,b`). Same tokens, catalog prices."""
+        from ..report import ReportError, parse_since
+        from ..whatif import build_whatif
+        q = request.query_params
+        extra = [k for k in q if k not in ("since", "profile", "project", "only")]
+        if extra:
+            raise InvalidRequest(f"unknown query parameter '{extra[0]}'", param=extra[0])
+        if engine.store is None:
+            raise InvalidRequest("usage storage is disabled")
+        if q.get("profile", "balanced") not in ("economy", "balanced", "high_assurance"):
+            raise InvalidRequest("profile must be economy, balanced or high_assurance", param="profile")
+        try:
+            return build_whatif(engine.store, engine.catalog, cfg, profile=q.get("profile", "balanced"), since=parse_since(q.get("since", "30d")),
+                                project=q.get("project") or None, only=[o.strip().lower() for o in q.get("only", "").split(",") if o.strip()])
+        except ReportError as e:
+            raise InvalidRequest(str(e), param="since")
+
     def _shadow_state() -> dict:
         from dataclasses import asdict
         from ..shadow import aggregate, spent_this_month
