@@ -1024,6 +1024,7 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
     today = str(date.today())
     ov = _load_overrides(cfg)
     incomplete: dict[str, list[str]] = {}  # model -> what the API could not tell us (limits, tier): it stays unroutable until the user sets them
+    failed: list[str] = []
 
     async def go():
         n = 0
@@ -1032,6 +1033,7 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
                 info = await a.list_model_info()
             except Exception as e:  # noqa: BLE001
                 typer.echo(f"{name}: sync failed: {e}")
+                failed.append(name)
                 continue
             for mid, i in sorted(info.items()):
                 ref = f"{name}/{mid}"
@@ -1079,6 +1081,9 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
         typer.echo(f"wrote {n} model(s) to {cfg.overrides_path}")
     elif n:
         typer.echo("dry run: add --write to save. Then set what the API cannot tell you (see `modelspend catalog set`).")
+    elif failed:
+        typer.echo(f"nothing was synced: {', '.join(failed)} failed (see above). Fix that first; an account with no credit is refused even the model list.", err=True)
+        raise typer.Exit(1)
     else:
         typer.echo("nothing to sync: no catalog models matched the API's list (use --add-new to add unknown ones)")
 

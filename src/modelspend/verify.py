@@ -108,6 +108,7 @@ def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None
 
 import re
 
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 BLOCKING = ("quota", "rate_limit")  # the provider refused for account reasons: nothing is learned about the adapter either way
 OVERLOAD_WAIT_S = 8.0
 
@@ -222,6 +223,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
             progress(f"{name}: {text}")
 
     def add(n: str, s: str, d: str) -> None:
+        d = _UUID.sub("<id>", d)  # provider errors can name your account or request by UUID: a report you paste into an issue should not carry them
         rep.checks.append(Check(n, s, d))
         say(f"{n:<11}{MARK[s]:<5} {d[:200]}")  # shown as each check finishes, so a slow provider never looks like a hang
 

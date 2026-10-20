@@ -708,3 +708,15 @@ def test_image_video_and_speech_models_are_never_the_default_pick():
     ids = ("grok-imagine-image", "grok-4", "grok-imagine-video", "grok-3-mini", "text-video", "text-speech", "grok-imagine-x")
     order = [m.id for m in pick_models(bare(*ids, provider="xai"), "xai", set(ids))]
     assert order == ["grok-3-mini", "grok-4", "grok-imagine-image", "grok-imagine-video", "grok-imagine-x", "text-speech", "text-video"]  # exact: each marker matters on its own
+
+
+def test_account_and_request_identifiers_are_removed_from_a_report_you_would_paste():
+    """Found live: an xAI error named the team by UUID in a console URL, and DeepSeek's names the request."""
+    team = "74606f44-b624-4329-83ee-8e8fbb3f14ca"
+    class Named(Fake):
+        async def generate(self, req):
+            raise ProviderError("openai", "quota", f"Your team doesn't have any credits. Buy them at https://console.x.ai/team/{team}. (request_id: 53B5E1E2-1111-2222-3333-444455556666)", 403)
+    r = run(Named())
+    text = to_table([r]) + to_markdown([r], "0.8", "2026-10-20")
+    assert team not in text and "53B5E1E2" not in text and "https://console.x.ai/team/<id>" in text
+    assert "doesn't have any credits" in text  # the useful part of the message stays

@@ -131,7 +131,7 @@ The extractor must support structured output, and ModelSpend only believes that 
 
 ## Verifying xAI (needs your own key, with credit)
 
-Not yet run against xAI. The adapter is the OpenAI-compatible one, rehearsed against a local fake with xAI's documented quirks (reasoning tokens reported separately, an account with no credits answering HTTP 403). `modelspend verify` checks the part that is easiest to get silently wrong: **how reasoning tokens are counted**. It compares the provider's `total_tokens` with `prompt + completion` and `prompt + completion + reasoning`; if the catalog's `reasoning_in_output` setting disagrees, it FAILs and prints the one command that fixes it.
+**Live so far (2026-10-20, an account with no credit):** `keys test` and the model list are refused with HTTP 403 `permission-denied` ("Your newly created team doesn't have any credits or licenses yet"), which ModelSpend now treats as an empty account (NOT VERIFIED), not a bad key. Add credit on xAI's console, then run the commands below. Nothing else has been run against xAI. The adapter is the OpenAI-compatible one, rehearsed against a local fake with xAI's documented quirks (reasoning tokens reported separately, an account with no credits answering HTTP 403). `modelspend verify` checks the part that is easiest to get silently wrong: **how reasoning tokens are counted**. It compares the provider's `total_tokens` with `prompt + completion` and `prompt + completion + reasoning`; if the catalog's `reasoning_in_output` setting disagrees, it FAILs and prints the one command that fixes it.
 
 ```
 modelspend keys set xai            # paste the key when asked; it is not echoed

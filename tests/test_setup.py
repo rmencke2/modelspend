@@ -355,3 +355,14 @@ def test_the_refusal_for_unknown_limits_names_the_command_that_fixes_it(catalog,
         Router(catalog, cfg, available_providers={"openai"}).plan(RouteRequest(
             messages=[{"role": "user", "content": "Classify this"}], providers=["openai"], allow_models=["openai/synthetic-openai-small"]))
     assert "modelspend catalog set <provider>/<model> tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>" in str(e.value)
+
+
+def test_a_failed_sync_says_so_instead_of_claiming_there_was_nothing_to_sync(monkeypatch):
+    """Found live (xAI, an account with no credit): after 'sync failed' the command went on to say 'nothing to sync: no catalog models matched'."""
+    class Broke(ScriptedAdapter):
+        async def list_model_info(self):
+            raise RuntimeError("403 permission-denied: no credits")
+    monkeypatch.setattr("modelspend.cli.build_adapters", lambda cfg: {"xai": Broke("xai", lambda r, n: "ok")})
+    monkeypatch.setenv("XAI_API_KEY", "k")
+    r = runner.invoke(app, ["catalog", "sync", "--provider", "xai", "--add-new", "--only", "grok", "--write"])
+    assert r.exit_code == 1 and "xai: sync failed" in r.output and "nothing was synced: xai failed" in r.output and "nothing to sync: no catalog models" not in r.output
