@@ -636,19 +636,36 @@ def whatif(since: str = typer.Option("30d", help="Window for your traffic: 7d, 2
            only: Optional[list[str]] = typer.Option(None, help="Only models whose name contains this (repeatable), e.g. --only gpt-4.1 --only claude."),
            provider: Optional[list[str]] = typer.Option(None, help="Only this provider (repeatable)."),
            show_all: bool = typer.Option(False, "--all", help="Show every model, not the cheapest 15."),
+           from_export: Optional[Path] = typer.Option(None, "--from-export", help="Price a provider usage export (CSV, JSON or JSON lines) instead of your ledger: a report on day one, "
+                                                      "before ModelSpend has seen any traffic. Nothing is stored."),
+           export_provider: Optional[str] = typer.Option(None, "--export-provider", help="Which provider the export is from (or put a 'provider' column in the file)."),
+           map_: Optional[list[str]] = typer.Option(None, "--map", help="Export column mapping field=column, as in `reconcile import`."),
            fmt: str = typer.Option("table", "--format", help="table or json.")):
     """What the tokens you already used would have cost on each model in your catalog (same tokens, catalog prices; not a quality claim)."""
     from .catalog import Catalog
     from .report import parse_since
-    from .whatif import build_whatif, to_table
+    from .whatif import build_whatif, build_whatif_export, to_table
     if fmt not in ("table", "json"):
         raise typer.BadParameter("--format must be table or json")
     if profile not in ("economy", "balanced", "high_assurance"):
         raise typer.BadParameter("--profile must be economy, balanced or high_assurance")
     cfg = Config.from_env()
     try:
-        rep = build_whatif(_store(), Catalog.from_config(cfg), cfg, profile=profile, since=parse_since(since), project=project,
-                           only=[o.lower() for o in only or []], providers=[registry.normalize(p) for p in provider or []])
+        flt = dict(only=[o.lower() for o in only or []], providers=[registry.normalize(p) for p in provider or []])
+        if from_export:
+            from .reconcile import load_rows
+            if project:
+                raise typer.BadParameter("--project does not apply to an export (it has no projects)")
+            mapping = {}
+            for m in map_ or []:
+                k, _, v = m.partition("=")
+                if not v:
+                    raise typer.BadParameter(f"--map expects field=column, got '{m}'")
+                mapping[k.strip()] = v.strip()
+            rep = build_whatif_export(_store(), Catalog.from_config(cfg), cfg, load_rows(from_export, export_provider and registry.normalize(export_provider), mapping),
+                                      profile=profile, **flt)
+        else:
+            rep = build_whatif(_store(), Catalog.from_config(cfg), cfg, profile=profile, since=parse_since(since), project=project, **flt)
     except ValueError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)

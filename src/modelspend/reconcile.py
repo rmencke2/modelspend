@@ -34,8 +34,8 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "provider": ("provider", "vendor"),
     "input_tokens": ("input_tokens", "uncached_input_tokens", "prompt_tokens", "n_context_tokens_total"),
     "output_tokens": ("output_tokens", "completion_tokens", "generated_tokens", "n_generated_tokens_total"),
-    "cache_read": ("cache_read_tokens", "cache_read_input_tokens", "input_cached_tokens", "cached_tokens", "cached_input_tokens"),
-    "cache_write": ("cache_write_tokens", "cache_creation_input_tokens", "cache_creation_tokens", "input_cache_write_tokens"),
+    "cache_read": ("cache_read", "cache_read_tokens", "cache_read_input_tokens", "input_cached_tokens", "cached_tokens", "cached_input_tokens"),
+    "cache_write": ("cache_write", "cache_write_tokens", "cache_creation_input_tokens", "cache_creation_tokens", "input_cache_write_tokens"),
     "requests": ("requests", "num_model_requests", "n_requests", "request_count"),
     "cost": ("cost_usd", "cost", "amount_usd", "amount", "spend", "spend_usd", "total_cost"),
 }
@@ -179,8 +179,8 @@ def parse_usage(text: str, provider: str | None, name: str = "file", mapping: di
     return sorted(agg.values(), key=lambda x: (x["provider"], x["model"], x["day"]))
 
 
-def import_file(store: Store, path: Path, provider: str | None, source: str | None = None, mapping: dict[str, str] | None = None,
-                now: float | None = None) -> dict[str, Any]:
+def load_rows(path: Path, provider: str | None, mapping: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Read and parse a usage export file (size-capped, UTF-8 only). Writes nothing."""
     path = Path(path)
     if not path.is_file():
         raise ReconcileError(f"no such file: {path}")
@@ -190,10 +190,16 @@ def import_file(store: Store, path: Path, provider: str | None, source: str | No
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         raise ReconcileError("the file is not UTF-8 text") from None
+    return parse_usage(text, provider, path.name, mapping)
+
+
+def import_file(store: Store, path: Path, provider: str | None, source: str | None = None, mapping: dict[str, str] | None = None,
+                now: float | None = None) -> dict[str, Any]:
+    path = Path(path)
     src = (source or path.name).strip()[:80]
     if not re.fullmatch(r"[A-Za-z0-9._ -]+", src):
         raise ReconcileError("--source may only contain letters, digits, space, '.', '_' and '-'")
-    rows = parse_usage(text, provider, path.name, mapping)
+    rows = load_rows(path, provider, mapping)
     ts = time.time() if now is None else now
     with store.lock:
         # warn when another source already covers some of the same provider-days: summing two exports of the same period double counts

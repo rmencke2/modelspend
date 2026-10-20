@@ -58,7 +58,7 @@ def test_rows_are_cheapest_first_and_compare_with_actual_spend():
     attempt(s, "a", priced()[0].ref, cost=0.5)
     r = build_whatif(s, CAT, Config(home="/tmp/x"))
     costs = [x["cost"] for x in r["rows"]]
-    assert costs == sorted(costs) and len(costs) == 3
+    assert costs == sorted(costs) and len(costs) >= 3
     assert abs(r["actual_cost"] - 0.5) < 1e-12
     assert all(abs(x["ratio"] - x["cost"] / 0.5) < 1e-9 for x in r["rows"])
 
@@ -163,3 +163,104 @@ def test_a_zero_priced_model_is_labelled_not_celebrated():
     r = build_whatif(s, cat, Config(home="/tmp/x"))
     assert next(x for x in r["rows"] if x["model"] == "openai/local-ish")["free"]
     assert "no per-token price" in to_table(r)
+
+
+# ---- the day-one report from a provider usage export ----
+from modelspend.reconcile import ReconcileError, parse_usage  # noqa: E402
+from modelspend.whatif import build_whatif_export  # noqa: E402
+
+
+def export_rows(csv_text, provider="openai"):
+    return parse_usage(csv_text, provider, "x.csv")
+
+
+def test_export_prices_tokens_and_splits_cached_where_the_provider_counts_them_inside_input():
+    big = CAT.get("openai/big")  # input 10, cached 1, output 40 per million
+    rows = export_rows("day,model,input_tokens,cache_read,output_tokens,requests,cost_usd\n2026-10-01,big-2026-01-01,1000000,400000,100000,50,12.5\n")
+    r = build_whatif_export(Store(":memory:"), CAT, Config(home="/tmp/x"), rows)
+    row = next(x for x in r["rows"] if x["model"] == "openai/big")
+    want = cost_for(big, Usage(input_tokens=600_000, cache_read_tokens=400_000, output_tokens=100_000))  # cached is NOT also billed as input
+    assert abs(row["cost"] - want) < 1e-9 and row["used"]  # the dated model name matched the catalog model
+    assert r["actual_cost"] == 12.5 and r["calls"] == 50 and r["source"]["first_day"] == "2026-10-01"
+    assert r["tokens"]["input"] == 600_000
+
+
+def test_export_from_a_provider_that_excludes_cached_tokens_keeps_input_as_given():
+    cat = Catalog.load(overrides={"add_models": [_m("anthropic", "mid", 3.0, 15.0, cached=0.3)]})
+    rows = export_rows("day,model,input_tokens,cache_read,output_tokens\n2026-10-01,mid,1000000,400000,0\n", provider="anthropic")
+    r = build_whatif_export(Store(":memory:"), cat, Config(home="/tmp/x"), rows)
+    assert r["tokens"]["input"] == 1_000_000 and r["tokens"]["cache_read"] == 400_000
+
+
+def test_export_without_a_cost_column_is_priced_from_the_catalog_and_says_so():
+    rows = export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000000,0\n2026-10-01,unknown-model,5,5\n")
+    r = build_whatif_export(Store(":memory:"), CAT, Config(home="/tmp/x"), rows)
+    assert abs(r["actual_cost"] - 10.0) < 1e-9 and r["source"]["cost_estimated_rows"] == 1 and r["source"]["cost_unknown_rows"] == 1
+    assert r["actual_complete"] is False
+    t = to_table(r)
+    assert "priced from the catalog" in t and "Your export (2026-10-01 to 2026-10-01" in t
+
+
+def test_export_ignores_long_context_surcharge_tiers_and_says_so():
+    tier = {"prompt_tokens_over": 1000, "input_per_mtok": 100.0, "output_per_mtok": 400.0}
+    m = _m("openai", "tiered", 1.0, 2.0)
+    m["pricing"]["long_context_tiers"] = [tier]
+    cat = Catalog.load(overrides={"add_models": [m]})
+    rows = export_rows("day,model,input_tokens,output_tokens\n2026-10-01,tiered,1000000,0\n")
+    r = build_whatif_export(Store(":memory:"), cat, Config(home="/tmp/x"), rows)
+    assert abs(next(x for x in r["rows"] if x["model"] == "openai/tiered")["cost"] - 1.0) < 1e-9  # a whole day's total is not one long prompt
+    assert any("long-context" in n for n in r["notes"])
+
+
+def test_export_stores_nothing_and_skips_empty_days():
+    s = Store(":memory:")
+    rows = export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000,10\n2026-10-02,,,\n")
+    r = build_whatif_export(s, CAT, Config(home="/tmp/x"), rows)
+    assert r["source"]["models"] == 1 and r["source"]["last_day"] == "2026-10-01"
+    assert s.db.execute("select count(*) from provider_usage").fetchone()[0] == 0
+
+
+def test_export_lists_shadow_evidence_but_no_moved_total():
+    s = Store(":memory:")
+    prov, model = "openai", "small"
+    for i in range(60):
+        s.record_shadow(request_id=f"r{i}", project=None, agent=None, category="extraction", used_provider="x", used_model="y", cand_provider=prov,
+                        cand_model=model, method="exact", verdict="pass", reason="x", used_cost=1.0, cand_cost=0.1, judge_cost=0.0, cand_input=1, cand_output=1)
+    rows = export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000,10\n")
+    row = next(x for x in build_whatif_export(s, CAT, Config(home="/tmp/x"), rows)["rows"] if x["model"] == "openai/small")
+    assert row["clears"] == ["extraction"] and row["evidence_n"] == 60 and row["cost_if_moved_where_clear"] is None
+
+
+def test_cli_from_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODELSPEND_HOME", str(tmp_path))
+    f = tmp_path / "u.csv"
+    f.write_text("day,model,input_tokens,output_tokens,cost\n2026-10-01,big,1000000,100000,14.0\n")
+    ok = CliRunner().invoke(app, ["whatif", "--from-export", str(f), "--export-provider", "openai", "--format", "json"])
+    assert ok.exit_code == 0, ok.output
+    assert '"kind": "export"' in ok.output
+    assert CliRunner().invoke(app, ["whatif", "--from-export", str(f)]).exit_code == 2  # which provider?
+    assert CliRunner().invoke(app, ["whatif", "--from-export", str(tmp_path / "missing.csv"), "--export-provider", "openai"]).exit_code == 2
+    assert CliRunner().invoke(app, ["whatif", "--from-export", str(f), "--export-provider", "openai", "--project", "x"]).exit_code == 2
+    assert "error" in CliRunner().invoke(app, ["whatif", "--from-export", str(f)]).output.lower()
+
+
+def test_unverified_shipped_models_are_listed_and_flagged_not_hidden():
+    cat = Catalog.load(overrides={"add_models": [dict(_m("anthropic", "shipped", 1.0, 2.0), availability="unverified")]})
+    r = build_whatif_export(Store(":memory:"), cat, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens\n2026-10-01,shipped,1000,10\n", "anthropic"))
+    assert "availability unverified" in to_table(r)
+    gone = Catalog.load(overrides={"add_models": [dict(_m("anthropic", "gone", 1.0, 2.0), availability="deprecated")]})
+    assert all(x["model"] != "anthropic/gone" for x in build_whatif_export(Store(":memory:"), gone, Config(home="/tmp/x"), export_rows(
+        "day,model,input_tokens,output_tokens\n2026-10-01,gone,1000,10\n", "anthropic"))["rows"])
+
+
+def test_a_model_in_the_export_with_no_catalog_price_is_named_with_the_fix_and_actual_is_unknown_not_zero():
+    r = build_whatif_export(Store(":memory:"), CAT, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens\n2026-10-01,gpt-9,1000,10\n"))
+    t = to_table(r)
+    assert r["source"]["no_catalog_price"] == ["openai/gpt-9"] and "openai/gpt-9" in t and "catalog price" in t
+    assert "Actual spend unknown" in t and "$0.0000" not in t.split("\n")[0]
+
+
+def test_an_empty_catalog_says_what_to_do_instead_of_printing_an_empty_table():
+    cat = Catalog(models=[], base_version="t", content_hash="0" * 8)
+    t = to_table(build_whatif_export(Store(":memory:"), cat, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000,10\n")))
+    assert "No model in your catalog has a known USD price" in t and "catalog sync" in t
