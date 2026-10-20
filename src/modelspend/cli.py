@@ -933,6 +933,86 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
         typer.echo("nothing to sync: no catalog models matched the API's list (use --add-new to add unknown ones)")
 
 
+@catalog_app.command("import-openrouter")
+def catalog_import_openrouter(
+        only: str = typer.Option("", help="Comma-separated model id substrings to import, e.g. --only claude-sonnet,gpt-4.1,llama-3.3. Needed unless --refresh: the list has hundreds of models."),
+        exact: bool = typer.Option(False, "--exact", help="Match --only against whole model ids."),
+        include_free: bool = typer.Option(False, "--include-free", help="Also import free-tier (':free') models: they are rate limited and may be logged by the provider."),
+        min_context: int = typer.Option(0, help="Skip models with a shorter context window than this many tokens."),
+        default_max_output: Optional[int] = typer.Option(None, help="Output limit to use for models whose listing does not state one (from the provider's docs)."),
+        refresh: bool = typer.Option(False, "--refresh", help="Update prices, limits and availability of the OpenRouter models already in your catalog."),
+        file: Optional[Path] = typer.Option(None, "--file", help="Read a saved response of OpenRouter's model list instead of fetching it."),
+        write: bool = typer.Option(False, help="Write to overrides.json. Without it this is a dry run."),
+        catalog: Optional[str] = CAT):
+    """Bring OpenRouter models into your catalog with their prices and limits, from OpenRouter's own model list.
+
+    Models arrive with no tier (that is your prior about a model, and OpenRouter does not publish one): routing will not pick them on a prior,
+    but shadow evaluation can measure them against the model you use today. Set a tier yourself with `modelspend catalog set`."""
+    from . import openrouter as orr
+    cfg = Config.from_env()
+    cat = _catalog(cfg, catalog)
+    only_l = [o.strip().lower() for o in only.split(",") if o.strip()]
+    if not only_l and not refresh:
+        typer.echo("name the models you want, e.g. --only claude-sonnet,gpt-4.1 (OpenRouter lists hundreds), or use --refresh to update the ones you already imported", err=True)
+        raise typer.Exit(2)
+    try:
+        payload = orr.load_payload(file.read_bytes()) if file else orr.fetch(registry.spec("openrouter").base_url, cfg.api_keys.get("openrouter"))
+    except (orr.OpenRouterError, OSError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1)
+    entries, skipped = orr.parse(payload)
+    have = {m.id: m for m in cat.models if m.provider == "openrouter"}
+    if refresh and not only_l:
+        picked, left = [e for e in entries if e.id in have], []
+        missing = sorted(set(have) - {e.id for e in entries})
+        for mid in missing:
+            typer.echo(f"note: {mid} is no longer in OpenRouter's usable list (removed, renamed or no longer priced per token); left as it is")
+    else:
+        picked, left = orr.select(entries, only_l, exact, include_free, min_context)
+    if not picked:
+        typer.echo("no matching models" + (" (" + "; ".join(f"{s.id}: {s.reason}" for s in left[:3]) + ")" if left else "")
+                   + f". {len(entries)} usable models in the list; try a shorter --only.")
+        raise typer.Exit(0)
+    today = str(date.today())
+    ov = _load_overrides(cfg)
+    ov.setdefault("add_models", [])
+    existing = {m["id"]: m for m in ov["add_models"] if m.get("provider") == "openrouter"}
+    incomplete: list[str] = []
+    typer.echo(f"{'':7}{'model':<46}{'context':>9}{'max out':>9}{'in $/M':>9}{'out $/M':>9}")
+    for e in picked:
+        fresh = orr.catalog_entry(e, today, default_max_output)
+        old = have.get(e.id)
+        status = "update" if old else "add"
+        change = ""
+        if old and old.pricing is not None and old.pricing.known and (old.pricing.input_per_mtok, old.pricing.output_per_mtok) != (e.input_per_mtok, e.output_per_mtok):
+            change = f"  PRICE CHANGED: in ${old.pricing.input_per_mtok:g} -> ${e.input_per_mtok:g}, out ${old.pricing.output_per_mtok:g} -> ${e.output_per_mtok:g}"
+        lim = fresh.get("limits", {})
+        typer.echo(f"{status:<7}openrouter/{e.id:<35}{lim.get('context_tokens', '?'):>9}{lim.get('max_output_tokens', '?'):>9}{e.input_per_mtok:>9g}{e.output_per_mtok:>9g}{change}")
+        for w in e.warnings:
+            typer.echo(f"       note: {w}")
+        if "max_output_tokens" not in lim and not (old and old.limits.max_output_tokens):
+            incomplete.append(f"openrouter/{e.id}")
+        if write:
+            ov["add_models"] = [m for m in ov["add_models"] if not (m.get("provider") == "openrouter" and m.get("id") == e.id)]
+            ov["add_models"].append(orr.merge(existing.get(e.id), fresh))
+            stale = ov.get("models", {}).get(f"openrouter/{e.id}")
+            if stale and "pricing" in stale:  # a hand-set price from `catalog price` would silently override the fresh one
+                del stale["pricing"]
+                typer.echo("       note: replaced the price you set by hand with OpenRouter's current one")
+    if left:
+        typer.echo(f"\nnot imported ({len(left)}): " + "; ".join(f"{s.id} ({s.reason})" for s in left[:3]) + (" ..." if len(left) > 3 else ""))
+    if incomplete:
+        typer.echo("\nNo output limit is listed for: " + ", ".join(incomplete[:5]) + (" ..." if len(incomplete) > 5 else "")
+                   + ". Add --default-max-output <n> (from the provider's docs) or set it with `modelspend catalog set <ref> limits.max_output_tokens=<n>`; "
+                     "until then they cannot be routed.")
+    if write:
+        _save_overrides(cfg, ov)
+        typer.echo(f"\nwrote {len(picked)} model(s) to {cfg.overrides_path}. Prices come from OpenRouter's own list (what OpenRouter bills); review them against openrouter.ai.\n"
+                   "Next: let shadow evaluation measure them against the model you use (`modelspend shadow on`), or set a tier yourself: modelspend catalog set openrouter/<id> tier=<1-3>")
+    else:
+        typer.echo("\ndry run: add --write to save.")
+
+
 @catalog_app.command("set")
 def catalog_set(ref: str, assignments: list[str] = typer.Argument(..., help="dotted.key=json-value, e.g. tier=2 capabilities.streaming=true pricing.input_per_mtok=3")):
     """Patch one model in overrides.json (validated by reloading the catalog; reverted if invalid)."""

@@ -32,7 +32,7 @@ def ds_response(text="billing", usage=None):
 
 # ---- the registry ----
 def test_builtins_keep_their_order_and_deepseek_is_a_preset():
-    assert registry.all_providers() == ("anthropic", "openai", "google", "xai", "deepseek")
+    assert registry.all_providers() == ("anthropic", "openai", "google", "xai", "deepseek", "openrouter")
     s = registry.spec("deepseek")
     assert (s.kind, s.base_url, s.key_env, s.max_tokens_param, s.cached_included) == ("preset", "https://api.deepseek.com", ("DEEPSEEK_API_KEY",), "max_tokens", True)
     assert registry.spec("anthropic").cached_included is False and registry.spec("openai").cached_included is True
@@ -210,7 +210,7 @@ def test_reconcile_knows_each_providers_cached_token_convention(tmp_path):
     Config(home=tmp_path, custom_providers={"together": GOOD["together"]})
     assert rc.parse_usage("date,model,input_tokens\n2026-10-10,deepseek-chat,5\n", "deepseek")[0]["provider"] == "deepseek"
     assert rc.parse_usage("date,model,input_tokens\n2026-10-10,m,5\n", "together")[0]["provider"] == "together"
-    with pytest.raises(rc.ReconcileError, match="choose from anthropic, openai, google, xai, deepseek, together"):
+    with pytest.raises(rc.ReconcileError, match="choose from anthropic, openai, google, xai, deepseek, openrouter, together"):
         rc.parse_usage("date,model,input_tokens\n2026-10-10,m,5\n", "nope")
     store = Store(":memory:")
     store.db.execute("insert into requests(id, ts, provider, model, status) values ('r', 1791590400.0 + 60, 'together', 'm', 'ok')")

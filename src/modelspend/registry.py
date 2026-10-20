@@ -57,6 +57,10 @@ PRESETS = {
         pricing_url="https://api-docs.deepseek.com/quick_start/pricing",
         note="Reports cache hits as prompt_cache_hit_tokens. Not yet exercised against the live API: check `modelspend keys test deepseek` and "
              "`modelspend sources check deepseek`, and take prices from DeepSeek's own page."),
+    "openrouter": ProviderSpec(
+        "openrouter", "preset", ("OPENROUTER_API_KEY",), base_url="https://openrouter.ai/api/v1", max_tokens_param="max_tokens", cached_included=True,
+        note="One key for many hosted models. Bring models, prices and limits in with `modelspend catalog import-openrouter --only <ids>`; "
+             "model ids contain a slash (openrouter/openai/gpt-4.1). Not yet exercised against the live API."),
 }
 
 _custom: dict[str, ProviderSpec] = {}

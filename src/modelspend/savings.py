@@ -122,8 +122,8 @@ def to_table(rep: dict[str, Any]) -> str:
         b = r["recommended"]
         pick = b or (r["candidates"][0] if r["candidates"] else None)
         state = {"ready": "READY", "collecting": "collecting evidence", "no_safe_cheaper_model": "no safe cheaper model yet"}[r["state"]]
-        rows.append([r["category"], _usd(r["cost"]) + ("" if r["cost_complete"] else " +"), (r["top_model"] or "-").split("/")[-1], state,
-                     (pick["model"].split("/")[-1] if pick else "-"), (f"{pick['passes']}/{pick['n']}" if pick else "-"),
+        rows.append([r["category"], _usd(r["cost"]) + ("" if r["cost_complete"] else " +"), (r["top_model"] or "-").split("/", 1)[-1], state,
+                     (pick["model"].split("/", 1)[-1] if pick else "-"), (f"{pick['passes']}/{pick['n']}" if pick else "-"),
                      (f"{pick['lower_bound']:.2f}" if pick and pick["lower_bound"] is not None else "-"),
                      (f"{pick['cost_ratio'] - 1:+.0%}" if pick and pick["cost_ratio"] is not None else "-"),
                      (f"{_usd(b['projected_saving_usd'])} ({b['projected_saving_usd'] / r['cost']:.0%})" if b and r["cost"] else "-")])

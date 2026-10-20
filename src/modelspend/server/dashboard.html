@@ -268,7 +268,7 @@ $('b-add').addEventListener('click',async()=>{const b=$('b-add');b.disabled=true
 // ---------------------------------------------------------------- Savings tab
 const SV={win:'30d'};
 const STATE={ready:['\u2713','Ready','st-ready'],collecting:['\u25D4','Collecting evidence',''],no_safe_cheaper_model:['\u2212','No safe cheaper model yet','']};
-const short=m=>String(m||'-').split('/').pop();
+const short=m=>String(m||'-').split('/').slice(1).join('/')||'-'; // drop the provider only: ids such as openrouter/openai/gpt-4.1 keep their slash
 function savingsBars(el,rows){el.textContent='';if(!rows.length){el.textContent='No calls recorded in this window.';el.className='note';return}el.className='';
  const mx=Math.max(1e-12,...rows.map(r=>r.cost));
  rows.forEach(r=>{const b=r.recommended,save=b?Math.min(b.projected_saving_usd,r.cost):0,keep=r.cost-save;

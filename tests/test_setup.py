@@ -188,7 +188,7 @@ def test_cli_sources_check_exit_code_signals_change(monkeypatch):
 
 def test_providers_list_does_not_claim_enabled_when_no_default_allowlist():
     out = runner.invoke(app, ["providers", "list"]).output
-    assert out.count("per request") == 5  # the four built-ins and the DeepSeek preset
+    assert out.count("per request") == 6  # the four built-ins and the DeepSeek and OpenRouter presets
     assert "per request" in out
     runner.invoke(app, ["providers", "enable", "anthropic"])
     rows = {l.split()[0]: l.split() for l in runner.invoke(app, ["providers", "list"]).output.splitlines()[1:5]}

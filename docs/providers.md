@@ -24,6 +24,26 @@ Take the prices from DeepSeek's own pricing page (`modelspend sources list` show
 
 DeepSeek's hosted API is run by a company in China. Check your own data-handling requirements before sending anything sensitive to it; marking a request `sensitive` keeps it off every provider you have not approved (`MODELSPEND_SENSITIVE_PROVIDERS`).
 
+## OpenRouter (one key, many models)
+
+[OpenRouter](https://openrouter.ai) is a hosted gateway with one key for many models. It is built in as a preset, and ModelSpend can bring in the models you name **with their prices and limits taken from OpenRouter's own model list**, so there is no hand-typing of prices.
+
+```bash
+modelspend keys set openrouter
+modelspend catalog import-openrouter --only claude-sonnet,gpt-4.1,llama-3.3          # a dry run: what would be added, at what price
+modelspend catalog import-openrouter --only claude-sonnet,gpt-4.1,llama-3.3 --write
+```
+
+- **You name the models** (`--only`, a substring of the id; `--exact` for whole ids). The list has hundreds of models and importing all of them would bury the ones you use.
+- **Prices, context length and output limit** come from OpenRouter (USD per token, converted to per million exactly). **Capabilities** (tool calling, structured output, temperature) are taken from the parameters OpenRouter advertises for the model; streaming and everything else is never assumed.
+- **No tier.** A tier is your own prior about a model's strength and OpenRouter does not publish one, so imported models are **not chosen by routing on a prior**. They are still **measured by shadow evaluation** against the model you use (`modelspend shadow on`), and the evidence decides. Or set a tier yourself: `modelspend catalog set openrouter/<id> tier=2`.
+- Model ids contain a slash, so references look like `openrouter/openai/gpt-4.1`.
+- **Skipped on purpose:** models that are not text in, text out; models without a fixed per-token price (router entries such as `openrouter/auto`); prices over $1,000 per million tokens (a unit mistake); and free-tier `:free` models, which are rate limited and may be logged by the provider (`--include-free` imports them). A model that lists no output limit stays unroutable until you give one (`--default-max-output <n>` or `catalog set`).
+- **Keep prices current:** `modelspend catalog import-openrouter --refresh --write` updates the OpenRouter models you already imported, reports price changes, replaces a price you set by hand with OpenRouter's current one, and keeps your tier. `--file saved.json` imports from a saved copy of the list instead of fetching it.
+- The response is **untrusted network data**: its size is capped, every number is checked, names are cleaned and odd entries are skipped with a reason.
+
+OpenRouter bills you and may charge fees on top of model prices; check its pricing. ModelSpend prices each call from the tokens OpenRouter reports and the imported price, so compare the totals with your OpenRouter activity page.
+
 ## Your own provider
 
 ```json
@@ -73,4 +93,4 @@ Routing, budgets, per-project reports, shadow evaluation, savings and reconcilia
 
 ## Not verified yet
 
-All of this is tested against fakes that mirror the SDK's response shapes (including DeepSeek's usage fields and token-limit parameter). **Checked live (2026-10-19) against a local Ollama server:** the provider is recognised, `catalog discover` listed the model through the OpenAI-compatible endpoint, `catalog sync --add-new` added it and `catalog price` priced it. **Not yet confirmed live:** a routed call that returns an answer, and any hosted provider including DeepSeek. If a provider's "OpenAI-compatible" API differs in a detail (for example a different usage field or an unsupported parameter), `modelspend keys test` and a first routed call will show it; please report what you see.
+All of this is tested against fakes that mirror the SDK's response shapes (including DeepSeek's usage fields and token-limit parameter). **Checked live (2026-10-19) against a local Ollama server:** the provider is recognised, `catalog discover` listed the model through the OpenAI-compatible endpoint, `catalog sync --add-new` added it and `catalog price` priced it. **Not yet confirmed live:** a routed call that returns an answer, and any hosted provider including DeepSeek and OpenRouter. The OpenRouter importer follows the response shape in OpenRouter's SDK documentation and is tested against fakes of it; it has not been run against the live API. If a provider's "OpenAI-compatible" API differs in a detail (for example a different usage field or an unsupported parameter), `modelspend keys test` and a first routed call will show it; please report what you see.
