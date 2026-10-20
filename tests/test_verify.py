@@ -338,3 +338,10 @@ def test_the_wait_prefers_the_classifiers_retry_after_over_scanning_the_message(
     e = ProviderError("g", "rate_limit", "something unrelated")
     e.retry_after = 7.0
     assert _retry_after(e) == 8.0
+
+
+def test_reasoning_tokens_are_shown_inside_the_output_count_so_a_thinking_model_can_be_checked():
+    think = Fake(usage=Usage(input_tokens=12, output_tokens=40, reasoning_tokens=35))
+    g = by(run(think))["generate"]
+    assert g.status == "ok" and "40 out (of which 35 reasoning)" in g.detail
+    assert "of which" not in by(run(Fake()))["generate"].detail  # nothing to show for a model that does not think

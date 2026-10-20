@@ -118,6 +118,11 @@ def _fail(e: BaseException) -> tuple[str, str]:
     return "fail", _err(e)
 
 
+def _out(u: Usage) -> str:
+    """Output tokens, with the thinking part named: a reasoning model's cost depends on it being counted once, inside the output."""
+    return f"{u.output_tokens} out" + (f" (of which {u.reasoning_tokens} reasoning)" if u.reasoning_tokens else "")
+
+
 def _total(u: Usage) -> int:
     return u.input_tokens + u.cache_read_tokens + u.cache_write_tokens
 
@@ -182,7 +187,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
             cost = f", ${cost_for(m, u):.6f} at catalog prices"
         except ValueError:
             pass
-        facts = f"{u.input_tokens} in + {u.cache_read_tokens} cached, {u.output_tokens} out, finish={r.finish_reason}, {ms} ms{cost}"
+        facts = f"{u.input_tokens} in + {u.cache_read_tokens} cached, {_out(u)}, finish={r.finish_reason}, {ms} ms{cost}"
         if u.output_tokens <= 0 or _total(u) <= 0:
             add("generate", "fail", f"the provider reported no token usage ({facts}): every cost for this provider would read zero")
         elif r.finish_reason == "length":
@@ -213,7 +218,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         elif gen_usage and gen_usage.input_tokens and abs(_total(end.usage) - _total(gen_usage)) > max(5, 0.2 * _total(gen_usage)):
             add("stream", "warn", f"streamed input tokens ({_total(end.usage)}) differ from the same call not streamed ({_total(gen_usage)})")
         else:
-            add("stream", "ok", f"{end.usage.input_tokens} in + {end.usage.cache_read_tokens} cached, {end.usage.output_tokens} out, text {'received' if text.strip() else 'EMPTY'}")
+            add("stream", "ok", f"{end.usage.input_tokens} in + {end.usage.cache_read_tokens} cached, {_out(end.usage)}, text {'received' if text.strip() else 'EMPTY'}")
     except Exception as e:  # noqa: BLE001
         add("stream", *_fail(e))
     # 5. structured output, only where the catalog claims it
