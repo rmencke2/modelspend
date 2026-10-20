@@ -79,6 +79,7 @@ class ProviderError(Exception):
         self.message = message
         self.status_code = status_code
         self.retry_after: float | None = None  # set by the classifier when the provider says how long to wait
+        self.zero_quota = False  # set by the classifier when the provider says this model's limit is 0 on your plan: retrying cannot help, other models may work
 
     @property
     def retryable(self) -> bool:

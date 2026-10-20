@@ -115,7 +115,7 @@ modelspend catalog sync --provider google --add-new --only flash --write
 modelspend verify google --cache --report gemini-check.md
 ```
 
-`verify` needs no price. It prefers plain text models (not image, speech or audio variants) and `-latest` aliases, and if the key is refused a model it tries the next (up to three), saying which it skipped; on a new account some listed models are refused, as the first live run showed. Prefer a tighter filter than `--only flash`: `--only gemini-flash-latest,gemini-flash-lite-latest --exact`. To name the model yourself: `modelspend verify google --model google/gemini-flash-latest`. Paste the report, FAILs and WARNs included.
+`verify` prints each check as it finishes and announces any wait, so a slow provider is visible; it never waits more than 90 s for one call; a model whose quota is 0 on your plan (Gemini's free tier sets quotas per model) is skipped and the next candidate tried; and if the provider stays refused after one retry, the remaining checks are skipped at once. It needs no price. It prefers plain text models (not image, speech or audio variants) and `-latest` aliases, and if the key is refused a model it tries the next (up to three), saying which it skipped; on a new account some listed models are refused, as the first live run showed. Prefer a tighter filter than `--only flash`: `--only gemini-flash-latest,gemini-flash-lite-latest --exact`. To name the model yourself: `modelspend verify google --model google/gemini-flash-latest`. Paste the report, FAILs and WARNs included.
 
 ## Pricing DeepSeek from its own page (needs your key; costs a few cents)
 

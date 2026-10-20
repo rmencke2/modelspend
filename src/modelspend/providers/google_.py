@@ -8,6 +8,7 @@ LIVE-UNVERIFIED in this repository's CI: tested against recorded-shape fakes onl
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, AsyncIterator
 
@@ -30,7 +31,12 @@ def normalize_usage(u: Any) -> Usage:
     return Usage(input_tokens=max(0, prompt - cached), cache_read_tokens=cached, output_tokens=cand + thoughts, reasoning_tokens=thoughts)
 
 
+LIST_TIMEOUT_S = 30.0  # the model list and token count are small calls: a stall there is a failure, not something to wait for
+
+
 class GoogleAdapter(ProviderAdapter):
+    """Every network call here is bounded: the google-genai SDK has no default timeout, so without these a stalled request would wait forever
+    and ModelSpend's own timeout and failover would never fire (found 2026-10-20 when `verify google` appeared to hang)."""
     name = "google"
 
     def __init__(self, api_key: str, client: Any = None):
@@ -112,9 +118,11 @@ class GoogleAdapter(ProviderAdapter):
 
     async def generate(self, req: ProviderRequest) -> ProviderResponse:
         try:
-            r = await self._get_client().aio.models.generate_content(**self.build_call(req))
+            r = await asyncio.wait_for(self._get_client().aio.models.generate_content(**self.build_call(req)), req.timeout_s)
         except InvalidRequest:
             raise
+        except asyncio.TimeoutError:
+            raise ProviderError(self.name, "timeout", f"no answer within {req.timeout_s:g}s") from None
         except Exception as e:  # noqa: BLE001
             raise classify_exception(self.name, e) from e
         return self._convert(r)
@@ -122,8 +130,13 @@ class GoogleAdapter(ProviderAdapter):
     async def stream(self, req: ProviderRequest) -> AsyncIterator[StreamChunk | StreamEnd]:
         text, calls, finish, usage = [], [], "stop", None
         try:
-            s = await self._get_client().aio.models.generate_content_stream(**self.build_call(req))
-            async for ch in s:
+            s = await asyncio.wait_for(self._get_client().aio.models.generate_content_stream(**self.build_call(req)), req.timeout_s)
+            it = s.__aiter__()
+            while True:
+                try:
+                    ch = await asyncio.wait_for(it.__anext__(), req.timeout_s)  # the wait applies to each chunk, so a stream that stalls midway is caught too
+                except StopAsyncIteration:
+                    break
                 part = self._convert(ch, len(calls))
                 if ch is not None and getattr(ch, "usage_metadata", None):
                     usage = ch.usage_metadata
@@ -135,22 +148,28 @@ class GoogleAdapter(ProviderAdapter):
                     finish = part.finish_reason
         except (InvalidRequest, ProviderError):
             raise
+        except asyncio.TimeoutError:
+            raise ProviderError(self.name, "timeout", f"the stream stalled for {req.timeout_s:g}s") from None
         except Exception as e:  # noqa: BLE001
             raise classify_exception(self.name, e) from e
         yield StreamEnd(response=ProviderResponse(text="".join(text), tool_calls=calls, finish_reason=finish, usage=normalize_usage(usage)))
 
     async def list_models(self) -> list[str]:
-        try:
+        async def collect() -> list[str]:
             out = []
             pager = await self._get_client().aio.models.list()
             async for m in pager:
                 out.append(m.name.removeprefix("models/"))
             return sorted(out)
+        try:
+            return await asyncio.wait_for(collect(), LIST_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            raise ProviderError(self.name, "timeout", f"the model list did not arrive within {LIST_TIMEOUT_S:g}s") from None
         except Exception as e:  # noqa: BLE001
             raise classify_exception(self.name, e) from e
 
     async def list_model_info(self) -> dict[str, dict]:
-        try:
+        async def collect() -> dict[str, dict]:
             out: dict[str, dict] = {}
             pager = await self._get_client().aio.models.list()
             async for m in pager:
@@ -160,13 +179,17 @@ class GoogleAdapter(ProviderAdapter):
                     "display_name": getattr(m, "display_name", None), "context_tokens": getattr(m, "input_token_limit", None),
                     "max_output_tokens": getattr(m, "output_token_limit", None)}
             return out
+        try:
+            return await asyncio.wait_for(collect(), LIST_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            raise ProviderError(self.name, "timeout", f"the model list did not arrive within {LIST_TIMEOUT_S:g}s") from None
         except Exception as e:  # noqa: BLE001
             raise classify_exception(self.name, e) from e
 
     async def count_tokens(self, req: ProviderRequest) -> int | None:
         try:
             call = self.build_call(req)
-            r = await self._get_client().aio.models.count_tokens(model=call["model"], contents=call["contents"])
+            r = await asyncio.wait_for(self._get_client().aio.models.count_tokens(model=call["model"], contents=call["contents"]), LIST_TIMEOUT_S)
             return int(r.total_tokens)
         except Exception:  # noqa: BLE001
             return None

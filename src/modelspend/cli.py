@@ -738,8 +738,8 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
                + (f", not counting {', '.join(unpriced)} (no price in your catalog: expect a fraction of a cent)." if unpriced else "."))
     if not yes and not typer.confirm("Go ahead?", default=True):
         raise typer.Exit(1)
-    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured))
-    typer.echo("\n" + to_table(reports))
+    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured, progress=lambda s: typer.echo(f"  {s}", err=True)))
+    typer.echo("\nResult:\n" + to_table(reports))
     md = to_markdown(reports, __version__, str(_date.today()))
     if report_file:
         report_file.write_text(md, encoding="utf-8")

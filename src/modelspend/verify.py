@@ -92,6 +92,8 @@ def pick_model(catalog: Catalog, provider: str, visible: set[str] | None = None,
 
 def _model_refused(e: BaseException) -> bool:
     """The key was refused THIS model (not found, retired, no longer offered to new accounts): a reason to try another model, not a verdict on the adapter."""
+    if getattr(e, "zero_quota", False):
+        return True  # quotas are per model: a model whose limit is 0 on this plan says nothing about the others
     if not isinstance(e, ProviderError) or e.kind != "bad_request":
         return False
     text = e.message.lower()
@@ -124,23 +126,34 @@ def _retry_after(e: BaseException) -> float:
     return 20.0 if secs is None else min(65.0, max(1.0, secs + 1.0))
 
 
-async def _retrying(op: Any, sleep: Any) -> Any:
-    """Run `op()`; if the provider rate-limits it, wait as long as it asks (once) and run it again. Free tiers allow only a handful of requests a minute."""
+CALL_TIMEOUT_S = 90.0  # no single call may take longer: a provider that stalls is a finding, never a hang
+
+
+async def _retrying(op: Any, sleep: Any, say: Any = None) -> Any:
+    """Run `op()` (at most CALL_TIMEOUT_S); if the provider rate-limits it, wait as long as it asks (once) and run it again. Free tiers allow only a handful of requests a minute."""
+    async def once() -> Any:
+        try:
+            return await asyncio.wait_for(op(), CALL_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            raise ProviderError("provider", "timeout", f"no answer within {CALL_TIMEOUT_S:g} s") from None
     try:
-        return await op()
+        return await once()
     except ProviderError as e:
-        if e.kind != "rate_limit":
-            raise
-        await sleep(_retry_after(e))
-        return await op()
+        if e.kind != "rate_limit" or getattr(e, "zero_quota", False):
+            raise  # a limit of 0 is not a wait
+        wait = _retry_after(e)
+        if say:
+            say(f"rate limited by the provider: waiting {wait:g} s, then trying once more")
+        await sleep(wait)
+        return await once()
 
 
 def _fail(e: BaseException) -> tuple[str, str]:
     """(status, detail) for a call that raised. An account refusal is 'skip' (blocked), not 'fail': FAIL is reserved for 'a number would be wrong'."""
+    if _model_refused(e):  # checked first: a limit of 0 is also a rate limit, but the useful advice is about the model
+        return "skip", "blocked, not verified: this key is refused the model (retired, not offered to new accounts, or no quota on your plan); name another with --model. " + _err(e)
     if getattr(e, "kind", None) in BLOCKING:
         return "skip", "blocked, not verified: " + _err(e)
-    if _model_refused(e):
-        return "skip", "blocked, not verified: this key is refused the model (it may be retired or no longer offered to new accounts); name another with --model. " + _err(e)
     return "fail", _err(e)
 
 
@@ -166,12 +179,33 @@ CACHE_RETRY_WAIT_S = 5.0  # some providers build their cache a few seconds after
 
 
 async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog, *, model: str | None = None, cache: bool = False,
-                          sleep: Any = asyncio.sleep, structured: bool = False) -> ProviderReport:
+                          sleep: Any = asyncio.sleep, structured: bool = False, progress: Any = None) -> ProviderReport:
     rep = ProviderReport(name, None)
-    add = lambda n, s, d: rep.checks.append(Check(n, s, d))  # noqa: E731
+
+    def say(text: str) -> None:
+        if progress:
+            progress(f"{name}: {text}")
+
+    def add(n: str, s: str, d: str) -> None:
+        rep.checks.append(Check(n, s, d))
+        say(f"{n:<11}{MARK[s]:<5} {d[:200]}")  # shown as each check finishes, so a slow provider never looks like a hang
+
+    state: dict[str, Any] = {"blocked": None}
+
+    async def call(op: Any) -> Any:
+        """Every provider call goes through here. Once the provider has refused for account reasons even after the one retry (no credit, a quota of zero),
+        the rest are not attempted: waiting out the same refusal for every remaining check would only look like a hang."""
+        if state["blocked"] is not None:
+            raise state["blocked"]
+        try:
+            return await _retrying(op, sleep, say)
+        except ProviderError as e:
+            if e.kind in BLOCKING:
+                state["blocked"] = e
+            raise
     visible: set[str] | None = None
     try:
-        visible = set(await _retrying(adapter.list_models, sleep))
+        visible = set(await call(adapter.list_models))
         add("key", "ok", f"{len(visible)} models visible to this key")
     except Exception as e:  # noqa: BLE001
         add("key", *_fail(e))
@@ -183,6 +217,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         add("model", "skip", f"no priced model in your catalog for {name}: run `modelspend catalog sync`, then `modelspend catalog price <ref> --input .. --output ..`")
         return rep
     rep.model = m.ref
+    say(f"checking {m.ref}")
     rep.est_cost = plan_cost(m, cache, structured)
     if not (m.pricing and m.pricing.known):
         add("model", "ok", f"using {m.ref}: no price in your catalog, so no cost is shown (the checks do not need one)")
@@ -191,7 +226,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     # 2. an unknown model must fail in a way the router understands
     try:
         probe = ProviderRequest(model="modelspend-verify-no-such-model", messages=[Message(role="user", content="hi")], max_output_tokens=8, timeout_s=30.0)
-        await _retrying(lambda: adapter.generate(probe), sleep)
+        await call(lambda: adapter.generate(probe))
         add("errors", "fail", "an unknown model name was accepted: the provider (or its adapter) may be routing it somewhere else")
     except ProviderError as e:
         if e.kind in ("quota", "auth", "rate_limit"):  # refused before the model was even looked at: this says nothing about how model errors are classified
@@ -209,13 +244,14 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     while r is None and gen_err is None:
         try:
             t0 = time.monotonic()
-            r = await _retrying(lambda: adapter.generate(_req(m, PROMPT)), sleep)
+            r = await call(lambda: adapter.generate(_req(m, PROMPT)))
             ms = int((time.monotonic() - t0) * 1000)
         except Exception as e:  # noqa: BLE001
             if _model_refused(e) and fallbacks:
                 nxt = fallbacks.pop(0)
                 add("model", "skip", f"{m.ref} was refused by this key (HTTP {getattr(e, 'status_code', '?')}: {e.message[:160]}); trying {nxt.ref}")  # type: ignore[attr-defined]
                 m, rep.model = nxt, nxt.ref
+                state["blocked"] = None  # the refusal was about that model, so the next one gets a fair try
                 rep.est_cost = plan_cost(m, cache, structured)
                 if not (m.pricing and m.pricing.known):
                     add("model", "ok", f"using {m.ref}: no price in your catalog, so no cost is shown")
@@ -256,7 +292,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
                 else:
                     got += ch.text
             return got, last
-        text, end = await _retrying(consume, sleep)
+        text, end = await call(consume)
         if end is None:
             add("stream", "fail", "the stream ended without a final response")
         elif end.usage.output_tokens <= 0 and _total(end.usage) <= 0:
@@ -271,7 +307,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     claimed = bool(m.capabilities.structured_output)
     if claimed or structured:
         try:
-            r = await _retrying(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA)), sleep)
+            r = await call(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA)))
             try:
                 ok = json.loads(r.text).get("answer") == "pong"
             except (ValueError, AttributeError):
@@ -292,12 +328,12 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     if cache:
         try:
             long_call = lambda: adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))  # noqa: E731
-            a = (await _retrying(long_call, sleep)).usage
-            b = (await _retrying(long_call, sleep)).usage
+            a = (await call(long_call)).usage
+            b = (await call(long_call)).usage
             waited = False
             if b.cache_read_tokens <= 0:
                 await sleep(CACHE_RETRY_WAIT_S)  # a cache that is built asynchronously is not there for an immediate repeat
-                b = (await _retrying(long_call, sleep)).usage
+                b = (await call(long_call)).usage
                 waited = True
             if b.cache_read_tokens <= 0:
                 add("cache", "skip", f"inconclusive: no cache hit was reported on the repeat, nor after a {CACHE_RETRY_WAIT_S:g} s wait ({_total(b)} tokens). Not every provider caches automatically")
@@ -312,13 +348,13 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
 
 
 async def verify_all(adapters: dict[str, ProviderAdapter], catalog: Catalog, targets: list[str], *, model: str | None = None, cache: bool = False,
-                     structured: bool = False) -> list[ProviderReport]:
+                     structured: bool = False, progress: Any = None) -> list[ProviderReport]:
     out = []
     for p in targets:
         if p not in adapters:
             out.append(ProviderReport(p, None, [Check("key", "skip", "no key configured")]))
             continue
-        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache, structured=structured))
+        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache, structured=structured, progress=progress))
     return out
 
 

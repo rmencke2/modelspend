@@ -436,3 +436,84 @@ def test_only_a_refusal_of_the_model_triggers_the_fallback_not_any_bad_request()
     bad = Refusing(refuse={"m1", "m2"}, status=400, message="Unsupported value: temperature", models=("m1", "m2"))
     r2 = run(bad, catalog=bare("m1", "m2"))
     assert set(bad.asked) == {"m1"} and by(r2)["generate"].status == "fail"  # a real bad request about OUR request is not hidden by trying another model
+
+
+# ---- a slow or limited provider must never look like a hang ----
+class Slow(Fake):
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model":
+            await asyncio.sleep(3)
+        return await super().generate(req)
+
+
+def test_a_call_that_never_answers_is_a_finding_not_a_hang(monkeypatch):
+    import modelspend.verify as vmod
+    monkeypatch.setattr(vmod, "CALL_TIMEOUT_S", 0.05)
+    r = run(Slow())
+    g = by(r)["generate"]
+    assert g.status == "fail" and "no answer within" in g.detail and r.status == "fail"  # a stalled provider says something about the provider
+
+
+class AlwaysLimited(Fake):
+    """The key lists models fine, but every generation is refused (a free-tier quota of zero, or no credit)."""
+
+    def __init__(self, kind="rate_limit", status=429, **kw):
+        super().__init__(**kw)
+        self.kind, self.status, self.attempts = kind, status, 0
+
+    async def generate(self, req):
+        self.attempts += 1
+        raise ProviderError("openai", self.kind, "You exceeded your current quota. Please retry in 2.5s.", self.status)
+
+
+def test_once_a_provider_is_persistently_refused_the_remaining_checks_are_not_attempted_or_waited_for():
+    ad = AlwaysLimited()
+    r = run(ad, cache=True)
+    assert ad.attempts == 2 and WAITS == [3.5]  # one try and one retry in total, not one pair per check
+    assert r.status == "skip" and all(by(r)[n].status == "skip" for n in ("errors", "generate", "stream", "cache"))
+    assert all("rate limited" in by(r)[n].detail for n in ("generate", "stream", "cache"))
+    nocredit = AlwaysLimited(kind="quota", status=402)
+    r2 = run(nocredit, cache=True)
+    assert nocredit.attempts == 1 and WAITS == [] and r2.status == "skip"  # no credit is not retried, and not repeated for every check
+
+
+def test_progress_is_reported_as_each_check_finishes_and_waits_are_announced():
+    lines: list[str] = []
+    run(Limited(fail_first=1), progress=lines.append)
+    text = "\n".join(lines)
+    assert "openai: checking openai/small" in text
+    assert "openai: rate limited by the provider: waiting 3.5 s, then trying once more" in text
+    assert [ln for ln in lines if ln.startswith("openai: generate")] and [ln for ln in lines if ln.startswith("openai: stream")]
+    assert "PASS" in text
+
+
+class ZeroQuota(Fake):
+    """Per-model quotas, as on Gemini's free tier: some models have a limit of 0 on this plan, others work."""
+
+    def __init__(self, zero, **kw):
+        super().__init__(**kw)
+        self.zero, self.asked = set(zero), []
+
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model":
+            self.asked.append(req.model)
+            if req.model in self.zero:
+                e = ProviderError("openai", "rate_limit", "You exceeded your current quota. Please retry in 4.2s.", 429)
+                e.zero_quota = True
+                raise e
+        return await super().generate(req)
+
+
+def test_a_model_with_a_quota_of_zero_is_skipped_without_waiting_and_the_next_one_is_tried():
+    ad = ZeroQuota(zero={"a-latest"}, models=("a-latest", "b", "c"))
+    r = run(ad, catalog=bare("a-latest", "b", "c"))
+    assert r.model == "openai/b" and r.status == "ok" and WAITS == []  # no point waiting out a limit of zero
+    assert ad.asked[0] == "a-latest" and "b" in ad.asked
+    assert any("a-latest was refused by this key" in c.detail and "trying openai/b" in c.detail for c in r.checks if c.name == "model")
+    assert by(r)["stream"].status == "ok"  # the earlier block did not carry over to the next model
+
+
+def test_when_every_candidate_has_a_quota_of_zero_it_is_not_verified_after_three_tries():
+    ad = ZeroQuota(zero={"a", "b", "c", "d"}, models=("a", "b", "c", "d"))
+    r = run(ad, catalog=bare("a", "b", "c", "d"))
+    assert r.status == "skip" and len(ad.asked) == 3 and WAITS == [] and "no quota on your plan" in by(r)["generate"].detail

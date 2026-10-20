@@ -71,6 +71,7 @@ _QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exc
                   "insufficient balance", "insufficient_balance")  # the last two: DeepSeek answers HTTP 402 "Insufficient Balance" when the account has no credit
 
 
+_ZERO_QUOTA = re.compile(r"limit:\s*0\b", re.I)
 _RETRY_HINT = re.compile(r"retry (?:in|after)\s*([0-9]+(?:\.[0-9]+)?)\s*s", re.I)
 _AUTH_MARKERS = ("api key not valid", "api_key_invalid", "api key expired", "api_key_expired")
 _TEMPORARY_MARKERS = ("please retry in", "retry in ", "retry after")  # a quota message that says when to try again is a rate limit, not an empty account
@@ -111,6 +112,7 @@ def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     err = ProviderError(provider, kind, f"{name}: {msg}", status)
     hint = _RETRY_HINT.search(full)
     err.retry_after = float(hint.group(1)) if hint else None  # how long the provider asked us to wait, when it said
+    err.zero_quota = kind in ("quota", "rate_limit") and bool(_ZERO_QUOTA.search(full))
     return err
 
 

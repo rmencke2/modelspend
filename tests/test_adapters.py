@@ -1,6 +1,8 @@
 """Adapters tested against fakes that mirror the official SDK response shapes.
 These do NOT prove live behaviour; see docs/limitations.md."""
+import asyncio
 import json
+import time
 from types import SimpleNamespace as NS
 
 import pytest
@@ -315,3 +317,75 @@ def test_the_retry_hint_survives_a_long_message_because_the_classifier_reads_the
     e = classify_exception("google", type("ClientError", (Exception,), {"code": 429})(long))
     assert e.kind == "rate_limit" and e.retry_after == 22.5 and len(e.message) < 400
     assert classify_exception("google", type("ClientError", (Exception,), {"code": 429})("429 RESOURCE_EXHAUSTED. You exceeded your current quota.")).retry_after is None
+
+
+# ---- the Gemini adapter never waits forever ----
+class HangingGoogle(FakeGoogle):
+    """A client whose calls never finish (the google-genai SDK has no default timeout), or whose stream stalls after its first chunk."""
+
+    def __init__(self, hang="generate"):
+        super().__init__()
+        self.hang = hang
+        self.aio = NS(models=NS(generate_content=self._gen, generate_content_stream=self._stream, count_tokens=self._count, list=self._list))
+
+    async def _gen(self, **kw):
+        await asyncio.sleep(3)
+
+    async def _stream(self, **kw):
+        if self.hang == "stream_start":
+            await asyncio.sleep(3)
+
+        async def chunks():
+            yield g_response([NS(text="a", thought=False, function_call=None)], usage=False)
+            await asyncio.sleep(3)  # stalls midway
+            yield g_response([NS(text="b", thought=False, function_call=None)])
+        return chunks()
+
+    async def _list(self, **kw):
+        await asyncio.sleep(3)
+
+    async def _count(self, **kw):
+        await asyncio.sleep(3)
+
+
+async def test_google_generate_gives_up_after_the_request_timeout_instead_of_waiting_forever():
+    with pytest.raises(ProviderError) as ei:
+        await GoogleAdapter("k", client=HangingGoogle()).generate(preq(timeout_s=0.05))
+    assert ei.value.kind == "timeout" and ei.value.retryable and "0.05" in ei.value.message  # retryable, so ModelSpend's own failover can act on it
+
+
+async def test_google_stream_times_out_whether_it_never_starts_or_stalls_midway():
+    got = []
+    with pytest.raises(ProviderError) as ei:
+        async for e in GoogleAdapter("k", client=HangingGoogle("stream_start")).stream(preq(timeout_s=0.05)):
+            got.append(e)
+    assert ei.value.kind == "timeout" and got == []
+    got2 = []
+    with pytest.raises(ProviderError) as ei2:
+        async for e in GoogleAdapter("k", client=HangingGoogle("midway")).stream(preq(timeout_s=0.05)):
+            got2.append(e)
+    assert ei2.value.kind == "timeout" and "stalled" in ei2.value.message and [x.text for x in got2] == ["a"]  # what arrived before the stall is still delivered
+
+
+async def test_google_list_and_count_calls_are_bounded_too(monkeypatch):
+    import modelspend.providers.google_ as g
+    monkeypatch.setattr(g, "LIST_TIMEOUT_S", 0.05)
+    a = GoogleAdapter("k", client=HangingGoogle())
+    for call in (a.list_models, a.list_model_info):
+        with pytest.raises(ProviderError) as ei:
+            await call()
+        assert ei.value.kind == "timeout"
+    t0 = time.monotonic()
+    assert await a.count_tokens(preq()) is None  # counting is best effort: a stall just means no count
+    assert time.monotonic() - t0 < 1.0  # ... and it must not take the stall's whole length to find that out
+
+
+def test_a_limit_of_zero_is_recognised_even_when_it_sits_past_the_truncation_point():
+    """Google's free-tier message names the metric first and 'limit: 0' about 400 characters in."""
+    long = ("429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check your plan and billing details. " + "More detail about quotas. " * 12
+            + "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.5-flash Please retry in 4.2s.")
+    zero = classify_exception("google", type("ClientError", (Exception,), {"code": 429})(long))
+    assert zero.zero_quota and zero.kind == "rate_limit" and zero.retry_after == 4.2
+    five = classify_exception("google", type("ClientError", (Exception,), {"code": 429})(long.replace("limit: 0,", "limit: 5,")))
+    assert not five.zero_quota and five.kind == "rate_limit"
+    assert not classify_exception("openai", type("E", (Exception,), {"status_code": 400})("model not found")).zero_quota
