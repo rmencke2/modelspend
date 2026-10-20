@@ -118,6 +118,8 @@ def test_evidence_clears_only_on_the_bar_and_unmeasured_stays_unmeasured():
     assert rc["clears"] == [] and rc["not_cleared"] == ["classification"] and rc["evidence_n"] == 60
     rb = next(x for x in r["rows"] if x["model"] == b.ref)
     assert rb["clears"] == ["classification"] and rb["evidence_n"] == 60
+    assert abs(rb["cost_if_moved_where_clear"] - rb["by_task"]["classification"]) < 1e-12  # all recorded traffic is classification here
+    assert rc["cost_if_moved_where_clear"] is None
     assert all(x["clears"] == [] and x["evidence_n"] == 0 for x in r["rows"] if x["model"] not in (b.ref, c.ref))
     t = to_table(r, top=10_000)
     assert "unmeasured" in t and "60/60" in t and "Same tokens, other prices" in t
@@ -138,3 +140,26 @@ def test_cli_prints_json_and_table(tmp_path, monkeypatch):
     assert '"rows"' in out.output
     assert CliRunner().invoke(app, ["whatif", "--all"]).exit_code == 0
     assert CliRunner().invoke(app, ["whatif", "--provider", "nonsense"]).exit_code == 2
+
+
+def test_cost_if_moved_keeps_other_tasks_at_actual_spend():
+    s = Store(":memory:")
+    big, sm = priced(2)
+    attempt(s, "a", big.ref, task="classification", cost=1.0)
+    attempt(s, "b", big.ref, task="analysis", cost=5.0)
+    prov, model = sm.ref.split("/", 1)
+    for i in range(60):
+        s.record_shadow(request_id=f"r{i}", project=None, agent=None, category="classification", used_provider="x", used_model="y", cand_provider=prov,
+                        cand_model=model, method="exact", verdict="pass", reason="x", used_cost=1.0, cand_cost=0.1, judge_cost=0.0, cand_input=1, cand_output=1)
+    row = next(x for x in build_whatif(s, CAT, Config(home="/tmp/x"))["rows"] if x["model"] == sm.ref)
+    assert abs(row["cost_if_moved_where_clear"] - (5.0 + row["by_task"]["classification"])) < 1e-12
+    assert row["cost"] < row["cost_if_moved_where_clear"]  # moving everything is not what the evidence supports
+
+
+def test_a_zero_priced_model_is_labelled_not_celebrated():
+    cat = Catalog.load(overrides={"add_models": [_m("openai", "local-ish", 0.0, 0.0)]})
+    s = Store(":memory:")
+    attempt(s, "a", "openai/local-ish", cost=0.0)
+    r = build_whatif(s, cat, Config(home="/tmp/x"))
+    assert next(x for x in r["rows"] if x["model"] == "openai/local-ish")["free"]
+    assert "no per-token price" in to_table(r)

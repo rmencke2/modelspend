@@ -98,7 +98,8 @@ def build_whatif(store: Store, catalog: Catalog, cfg: Config, *, profile: str = 
                 continue
             verdict = judge_evidence(EvidenceItem(n=a["n"], passes=a["passes"], dataset="shadow"), bar)[0]
             (clears if verdict == "clears" else below).append(task)
-        rows.append({"model": m.ref, "cost": cost, "vs_actual": (cost - spend) if spend else None, "ratio": (cost / spend) if spend else None,
+        moved = spend - sum(actual[t] for t in clears) + sum(by_task[t] for t in clears) if clears else None  # only the tasks where it clears the bar move
+        rows.append({"model": m.ref, "cost": cost, "cost_if_moved_where_clear": moved, "free": p.input_per_mtok == 0 and p.output_per_mtok == 0, "vs_actual": (cost - spend) if spend else None, "ratio": (cost / spend) if spend else None,
                      "by_task": by_task, "too_large": no_fit, "over_output_cap": no_room, "tier": m.tier, "used": m.ref in used,
                      "evidence_n": n_all, "evidence_passes": passes_all, "clears": sorted(clears), "not_cleared": sorted(below),
                      "price_verified_on": p.verified_on.isoformat() if p.verified_on else None})
@@ -128,7 +129,7 @@ def _usd(v: float | None) -> str:
 def to_table(rep: dict[str, Any], top: int = 15) -> str:
     if not rep["calls"]:
         return "No usage recorded in this window."
-    head = ["model", "would cost", "vs actual", "evidence", "clears the bar for", "notes"]
+    head = ["model", "would cost", "vs actual", "evidence", "clears the bar for", "total if moved only there", "notes"]
     rows = [head]
     shown = rep["rows"][:top]
     for r in shown:
@@ -136,16 +137,19 @@ def to_table(rep: dict[str, Any], top: int = 15) -> str:
         notes = []
         if r["used"]:
             notes.append("you used it")
+        if r["free"]:
+            notes.append("no per-token price (local or free): hardware and quality not counted")
         if r["too_large"]:
             notes.append(f"{r['too_large']} call(s) exceed its context")
         if r["over_output_cap"]:
             notes.append(f"{r['over_output_cap']} call(s) exceed its output cap")
         rows.append([r["model"], _usd(r["cost"]), (f"{r['ratio'] - 1:+.0%}" if r["ratio"] is not None else "-"), ev,
-                     ", ".join(r["clears"]) or "-", "; ".join(notes)])
+                     ", ".join(r["clears"]) or "-",
+                     _usd(r["cost_if_moved_where_clear"]) if r["cost_if_moved_where_clear"] is not None else "-", "; ".join(notes)])
     widths = [max(len(x[i]) for x in rows) for i in range(len(head))]
     lines = []
     for n, x in enumerate(rows):
-        lines.append("  ".join(c.ljust(widths[i]) if i in (0, 3, 4, 5) else c.rjust(widths[i]) for i, c in enumerate(x)).rstrip())
+        lines.append("  ".join(c.ljust(widths[i]) if i in (0, 3, 4, 6) else c.rjust(widths[i]) for i, c in enumerate(x)).rstrip())
         if n == 0:
             lines.append("  ".join("-" * w for w in widths))
     t = rep["tokens"]
