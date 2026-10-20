@@ -11,7 +11,7 @@ from typing import Optional
 
 import typer
 
-from . import POLICY_VERSION, registry
+from . import POLICY_VERSION, __version__, registry
 from .catalog import Catalog, shipped_catalog_path, write_evidence
 from .config import (
     Config, keys_path, load_settings, parse_env_file, read_keys_file, save_settings, settings_path, write_keys_file,
@@ -705,6 +705,45 @@ def share(out: Path = typer.Option(Path("modelspend-report.html"), "--out", "-o"
     out.write_text(text, encoding="utf-8")
     typer.echo(f"wrote {out} ({len(text) // 1024 + 1} KB). It holds numbers, model names and task types only"
                + (", plus project names" if include_projects else "") + ". Look it over before you share it.")
+
+
+@app.command()
+def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers to check (default: every provider that has a key)."),
+           model: Optional[str] = typer.Option(None, help="Check this model (provider/id) instead of the cheapest priced one."),
+           cache: bool = typer.Option(False, "--cache", help="Also check cached-token accounting (two calls of about 1,500 input tokens)."),
+           yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask before spending."),
+           report_file: Optional[Path] = typer.Option(None, "--report", help="Also write a Markdown report you can paste into an issue (no keys, no prompts).")):
+    """Live check of a provider on your own key: usage reporting, streaming, error handling, structured output (a fraction of a cent)."""
+    from datetime import date as _date
+    from .catalog import Catalog
+    from .verify import pick_model, plan_cost, to_markdown, to_table, verify_all
+    cfg = Config.from_env()
+    adapters = build_adapters(cfg)
+    targets = [_prov(p) for p in providers] if providers else list(adapters)
+    if not targets:
+        typer.echo("no keys configured; run: modelspend keys set <provider>", err=True)
+        raise typer.Exit(1)
+    cat = Catalog.from_config(cfg)
+    plan = []
+    for t in targets:
+        m = pick_model(cat, t, None, model if model and model.startswith(t + "/") else None)
+        plan.append((t, m))
+    bound = sum(plan_cost(m, cache) for _, m in plan)
+    typer.echo("This sends a few tiny requests to each provider, directly (they are not recorded in your ledger):")
+    for t, m in plan:
+        typer.echo(f"  {t:<12}{m.ref if m else '(no priced model in your catalog: only the key check will run)'}")
+    typer.echo(f"Most it can cost: about ${bound:.4f} (every call at its full output allowance; usually a tenth of that).")
+    if not yes and not typer.confirm("Go ahead?", default=True):
+        raise typer.Exit(1)
+    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache))
+    typer.echo("\n" + to_table(reports))
+    md = to_markdown(reports, __version__, str(_date.today()))
+    if report_file:
+        report_file.write_text(md, encoding="utf-8")
+        typer.echo(f"\nwrote {report_file}")
+    else:
+        typer.echo("\nPaste this into an issue if something failed:\n\n" + md)
+    raise typer.Exit(1 if any(r.status == "fail" for r in reports) else 0)
 
 
 @reconcile_app.command("import")

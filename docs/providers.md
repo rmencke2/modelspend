@@ -91,6 +91,27 @@ A mistake here would send your key to the wrong place or silently drop a provide
 
 Routing, budgets, per-project reports, shadow evaluation, savings and reconciliation treat these providers like the built-in ones: they are listed by `modelspend keys list` and `providers list`, appear in the dashboard, and use the same evidence bars. Structured output and tool calling stay **unverified** until you test them and mark them (`modelspend catalog set <provider>/<model> capabilities.structured_output=true`), so a request that needs them will not be sent to a model you have not confirmed.
 
+## Check a provider yourself: `modelspend verify`
+
+```
+modelspend verify                  # every provider that has a key
+modelspend verify deepseek --cache # one provider, plus a cached-token check
+modelspend verify --report check.md
+```
+
+It asks first, shows the most it can cost (a fraction of a cent: tiny prompts, the provider's cheapest priced model in your catalog), then checks what the accounting depends on:
+
+| check | what it proves |
+|---|---|
+| key | the key lists models |
+| errors | an unknown model fails with an error ModelSpend understands (not a raw SDK exception, not silently accepted) |
+| generate | a tiny completion reports non-zero token usage and finishes (a provider that reports none would make every cost read $0) |
+| stream | the same call streamed also reports usage, and it matches |
+| structured | a JSON-schema reply parses (only if your catalog says the model supports it) |
+| cache (`--cache`) | the same ~1,500-token prompt twice: uncached + cached tokens add up the same both times, so cached tokens are counted once |
+
+A **FAIL** means a number ModelSpend shows for that provider would be wrong; a **WARN** means it would be incomplete or needs a look; **skip** means the check could not run or was inconclusive (a provider that does not cache automatically skips the cache check). The calls go straight to the provider and are not recorded in your ledger, so a usage export for that day will show a few requests ModelSpend did not record. The report holds model ids, counts and error kinds, never keys or prompts: paste it into an issue.
+
 ## Not verified yet
 
 All of this is tested against fakes that mirror the SDK's response shapes (including DeepSeek's usage fields and token-limit parameter). **Checked live (2026-10-19) against a local Ollama server:** the provider is recognised, `catalog discover` listed the model through the OpenAI-compatible endpoint, `catalog sync --add-new` added it and `catalog price` priced it. **Not yet confirmed live:** a routed call that returns an answer, and any hosted provider including DeepSeek and OpenRouter. The OpenRouter importer follows the response shape in OpenRouter's SDK documentation and is tested against fakes of it; it has not been run against the live API. If a provider's "OpenAI-compatible" API differs in a detail (for example a different usage field or an unsupported parameter), `modelspend keys test` and a first routed call will show it; please report what you see.
