@@ -198,7 +198,7 @@ def test_export_without_a_cost_column_is_priced_from_the_catalog_and_says_so():
     assert abs(r["actual_cost"] - 10.0) < 1e-9 and r["source"]["cost_estimated_rows"] == 1 and r["source"]["cost_unknown_rows"] == 1
     assert r["actual_complete"] is False
     t = to_table(r)
-    assert "priced from the catalog" in t and "Your export (2026-10-01 to 2026-10-01" in t
+    assert "priced from catalog prices" in t and "Your export (2026-10-01 to 2026-10-01" in t
 
 
 def test_export_ignores_long_context_surcharge_tiers_and_says_so():
@@ -264,3 +264,21 @@ def test_an_empty_catalog_says_what_to_do_instead_of_printing_an_empty_table():
     cat = Catalog(models=[], base_version="t", content_hash="0" * 8)
     t = to_table(build_whatif_export(Store(":memory:"), cat, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000,10\n")))
     assert "No model in your catalog has a known USD price" in t and "catalog sync" in t
+
+
+def test_export_with_no_cost_column_calls_its_spend_an_estimate_and_does_not_claim_eval_runs_are_excluded():
+    r = build_whatif_export(Store(":memory:"), CAT, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens\n2026-10-01,big,1000000,0\n"))
+    t = to_table(r)
+    assert "Estimated spend $10.0000" in t and "not from an invoice" in t
+    assert "excluded from your traffic" not in t and "covers everything billed on that key" in t
+
+
+def test_export_with_a_cost_column_says_actual_spend():
+    r = build_whatif_export(Store(":memory:"), CAT, Config(home="/tmp/x"), export_rows("day,model,input_tokens,output_tokens,cost\n2026-10-01,big,1000000,0,9.5\n"))
+    assert "Actual spend $9.5000" in to_table(r)
+
+
+def test_the_ledger_report_still_says_its_own_eval_runs_are_excluded():
+    s = Store(":memory:")
+    attempt(s, "a", priced()[0].ref)
+    assert "excluded from your traffic" in to_table(build_whatif(s, CAT, Config(home="/tmp/x")))

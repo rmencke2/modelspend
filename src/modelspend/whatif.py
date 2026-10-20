@@ -67,7 +67,7 @@ def build_whatif_export(store: Store, catalog: Catalog, cfg: Config, rows: list[
     and context-limit checks are skipped; there is no task type either, so the shadow evidence is listed without a 'moved only there' total.
     Nothing is written to the database."""
     traffic: dict[str, list[tuple[int, int, int, int]]] = {"(export)": []}
-    spend, estimated, unknown, used, missing = 0.0, 0, 0, set(), set()
+    spend, estimated, unknown, used, missing, from_file = 0.0, 0, 0, set(), set(), 0
     calls, days = 0, set()
     for r in rows:
         if r["model"] == NO_USAGE:
@@ -83,6 +83,7 @@ def build_whatif_export(store: Store, catalog: Catalog, cfg: Config, rows: list[
         calls += r["requests"]
         if r["cost"] is not None:
             spend += r["cost"]
+            from_file += 1
             continue
         try:
             spend += cost_for(_flat(catalog.get(ref)), Usage(input_tokens=inp, cache_read_tokens=cr, cache_write_tokens=cw, output_tokens=r["output_tokens"]))
@@ -93,7 +94,8 @@ def build_whatif_export(store: Store, catalog: Catalog, cfg: Config, rows: list[
     rep = _price(store, catalog, cfg, profile, traffic, {"(export)": spend}, used, only, providers, tiers=False)
     rep.update({"since": None, "project": None, "calls": calls, "actual_complete": not unknown,
                 "source": {"kind": "export", "first_day": min(days) if days else None, "last_day": max(days) if days else None, "models": len(used),
-                           "cost_estimated_rows": estimated, "cost_unknown_rows": unknown, "no_catalog_price": sorted(missing)}})
+                           "cost_estimated_rows": estimated, "cost_from_file_rows": from_file, "cost_unknown_rows": unknown, "no_catalog_price": sorted(missing)}})
+    rep["notes"][-1] = ("An export cannot tell your own calls from ModelSpend's eval and shadow runs: it covers everything billed on that key, so this table prices all of it.")
     rep["notes"].insert(0, "Built from a provider usage export: totals per model per day. Long-context price tiers and per-request context limits cannot be applied, so a model "
                            "with a long-context surcharge may cost more than shown on long prompts. Nothing from the file was stored.")
     return rep
@@ -217,10 +219,12 @@ def to_table(rep: dict[str, Any], top: int = 15) -> str:
     what = (f"Your export ({src['first_day']} to {src['last_day']}, {src['models']} model(s)): " + (f"{rep['calls']:,} requests, " if rep["calls"] else "")
             if src else f"Your traffic: {rep['calls']:,} billed calls, ")
     basis = ""
+    label = "Actual spend"
     if src and src["cost_estimated_rows"]:
-        basis = f" ({src['cost_estimated_rows']} row(s) had no cost column and are priced from the catalog)"
+        label = "Estimated spend" if not src["cost_from_file_rows"] else "Spend"
+        basis = f" ({src['cost_estimated_rows']} row(s) had no cost column and are priced from catalog prices, not from an invoice)"
     out = (f"{what}{t['input']:,} input + {t['cache_read']:,} cached + {t['cache_write']:,} cache-write "
-           f"input tokens and {t['output']:,} output tokens. Actual spend {('unknown (no cost column, and no catalog price for these models)' if not rep['actual_cost'] and not rep['actual_complete'] else _usd(rep['actual_cost']) + ('' if rep['actual_complete'] else ' (some rows unpriced, so this is a minimum)'))}{basis}.\n\n")
+           f"input tokens and {t['output']:,} output tokens. {label} {('unknown (no cost column, and no catalog price for these models)' if not rep['actual_cost'] and not rep['actual_complete'] else _usd(rep['actual_cost']) + ('' if rep['actual_complete'] else ' (some rows unpriced, so this is a minimum)'))}{basis}.\n\n")
     out += "\n".join(lines)
     if len(rep["rows"]) > len(shown):
         out += f"\n... {len(rep['rows']) - len(shown)} more (cheapest first). Show all with --all."
