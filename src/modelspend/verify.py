@@ -31,6 +31,7 @@ from .types import Message, Usage
 
 PROMPT = "Reply with exactly one word: pong"
 SCHEMA = {"type": "object", "properties": {"answer": {"type": "string", "enum": ["pong"]}}, "required": ["answer"], "additionalProperties": False}
+FILLER_LARGE_TIMES = 4  # a second, longer prompt (~5,000 tokens) for providers that only cache above a minimum size
 FILLER = "The committee reviewed the quarterly figures, compared them with last year, and recorded every difference in the shared ledger. " * 60  # ~1,500 tokens
 MAX_OUT = 512  # room for a reasoning model to think before it says one word
 STATUS_ORDER = {"fail": 3, "warn": 2, "ok": 1, "skip": 0}
@@ -108,6 +109,15 @@ def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None
 import re
 
 BLOCKING = ("quota", "rate_limit")  # the provider refused for account reasons: nothing is learned about the adapter either way
+OVERLOAD_WAIT_S = 8.0
+
+
+def _overloaded(e: BaseException) -> bool:
+    """HTTP 503 or wording like 'high demand, try again later': the provider is busy right now. That says nothing about the adapter, unlike a plain 500."""
+    if not isinstance(e, ProviderError) or e.kind != "server":
+        return False
+    text = e.message.lower()
+    return e.status_code == 503 or any(k in text for k in ("high demand", "overloaded", "try again later", "temporarily unavailable"))
 
 
 def _err(e: BaseException) -> str:
@@ -139,11 +149,14 @@ async def _retrying(op: Any, sleep: Any, say: Any = None, scale: float = 1.0) ->
     try:
         return await once()
     except ProviderError as e:
-        if e.kind != "rate_limit" or getattr(e, "zero_quota", False):
-            raise  # a limit of 0 is not a wait
-        wait = _retry_after(e)
+        if e.kind == "rate_limit" and not getattr(e, "zero_quota", False):  # a limit of 0 is not a wait
+            wait, why = _retry_after(e), "rate limited by the provider"
+        elif _overloaded(e):
+            wait, why = OVERLOAD_WAIT_S, f"the provider says it is overloaded (HTTP {e.status_code})"
+        else:
+            raise
         if say:
-            say(f"rate limited by the provider: waiting {wait:g} s, then trying once more")
+            say(f"{why}: waiting {wait:g} s, then trying once more")
         await sleep(wait)
         return await once()
 
@@ -154,6 +167,8 @@ def _fail(e: BaseException) -> tuple[str, str]:
         return "skip", "blocked, not verified: this key is refused the model (retired, not offered to new accounts, or no quota on your plan); name another with --model. " + _err(e)
     if getattr(e, "kind", None) in BLOCKING:
         return "skip", "blocked, not verified: " + _err(e)
+    if _overloaded(e):
+        return "skip", "blocked, not verified: the provider says it is overloaded right now (HTTP 503) and did not recover after one retry; run it again later. " + _err(e)
     return "fail", _err(e)
 
 
@@ -170,8 +185,8 @@ def plan_cost(model: Model | None, cache: bool, structured: bool = False) -> flo
     """An upper bound on what the checks can cost: every call charged its full output allowance."""
     if not model or not model.pricing or not model.pricing.known:
         return 0.0
-    out_calls = 2 + (1 if (model.capabilities.structured_output or structured) else 0) + (3 if cache else 0)  # the cache check may repeat once after a wait
-    inp = 60 * 3 + (3 * 1600 if cache else 0)
+    out_calls = 2 + (1 if (model.capabilities.structured_output or structured) else 0) + (6 if cache else 0)  # the cache check may repeat once after a wait, and once more with a longer prompt
+    inp = 60 * 3 + (3 * 1600 + 3 * 1600 * FILLER_LARGE_TIMES if cache else 0)
     return (inp * model.pricing.input_per_mtok + out_calls * MAX_OUT * model.pricing.output_per_mtok) / 1_000_000
 
 
@@ -200,7 +215,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         try:
             return await _retrying(op, sleep, say, state["timeout"] / 60.0)  # the hard cap grows with the allowance, so the two never disagree
         except ProviderError as e:
-            if e.kind in BLOCKING:
+            if e.kind in BLOCKING or _overloaded(e):
                 state["blocked"] = e
             raise
     visible: set[str] | None = None
@@ -229,8 +244,8 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         await call(lambda: adapter.generate(probe))
         add("errors", "fail", "an unknown model name was accepted: the provider (or its adapter) may be routing it somewhere else")
     except ProviderError as e:
-        if e.kind in ("quota", "auth", "rate_limit"):  # refused before the model was even looked at: this says nothing about how model errors are classified
-            add("errors", "skip", f"inconclusive: the provider refused for account reasons ({e.kind}) before looking at the model; fix that and run again")
+        if e.kind in ("quota", "auth", "rate_limit") or _overloaded(e):  # refused before the model was even looked at: this says nothing about how model errors are classified
+            add("errors", "skip", f"inconclusive: the provider refused for account or capacity reasons ({e.kind}) before looking at the model; fix that, or try later, and run again")
         elif e.kind == "unknown":
             add("errors", "warn", f"unknown model -> unknown (not classified: failover may treat it wrongly). The provider said: HTTP {e.status_code}, {e.message[:100]}")
         else:
@@ -328,24 +343,35 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
             add("structured", *_fail(e))
     else:
         add("structured", "skip", "the catalog does not claim structured output for this model (test it with --structured)")
-    # 6. cached-token accounting (opt in: ~3,000 input tokens)
+    # 6. cached-token accounting (opt in: ~3,000 input tokens; ~15,000 more if the short prompt gets no hit)
     if cache:
         try:
-            long_call = lambda: adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT, timeout_s=state["timeout"]))  # noqa: E731
-            a = (await call(long_call)).usage
-            b = (await call(long_call)).usage
-            waited = False
-            if b.cache_read_tokens <= 0:
-                await sleep(CACHE_RETRY_WAIT_S)  # a cache that is built asynchronously is not there for an immediate repeat
+            hit: tuple[Usage, Usage, bool, bool] | None = None
+            tried: list[int] = []
+            for bigger, text in ((False, FILLER), (True, FILLER * FILLER_LARGE_TIMES)):
+                long_call = lambda t=text: adapter.generate(_req(m, t + "\n" + PROMPT, max_out=MAX_OUT, timeout_s=state["timeout"]))  # noqa: E731
+                a = (await call(long_call)).usage
                 b = (await call(long_call)).usage
-                waited = True
-            if b.cache_read_tokens <= 0:
-                add("cache", "skip", f"inconclusive: no cache hit was reported on the repeat, nor after a {CACHE_RETRY_WAIT_S:g} s wait ({_total(b)} tokens). Not every provider caches automatically")
-            elif abs(_total(a) - _total(b)) > 0.05 * max(_total(a), 1):
-                add("cache", "fail", f"cached tokens are not counted once: first call {_total(a)} total, second {_total(b)} (= {b.input_tokens} + {b.cache_read_tokens} cached). Reconciliation and costs would be off")
+                waited = False
+                if b.cache_read_tokens <= 0:
+                    await sleep(CACHE_RETRY_WAIT_S)  # a cache that is built asynchronously is not there for an immediate repeat
+                    b = (await call(long_call)).usage
+                    waited = True
+                if b.cache_read_tokens > 0:
+                    hit = (a, b, waited, bigger)
+                    break
+                tried.append(_total(b))
+            if hit is None:
+                add("cache", "skip", f"inconclusive: no cache hit was reported for prompts of {' and '.join(f'{n:,}' for n in tried)} tokens, each repeated and once more after a "
+                                     f"{CACHE_RETRY_WAIT_S:g} s wait. Not every provider caches automatically, and some only above a minimum prompt size or when busy")
             else:
-                add("cache", "ok", f"repeat: {b.input_tokens} uncached + {b.cache_read_tokens} cached = {_total(b)}, first call {_total(a)}: counted once"
-                   + (f" (the cache was only there after a {CACHE_RETRY_WAIT_S:g} s wait)" if waited else ""))
+                a, b, waited, bigger = hit
+                if abs(_total(a) - _total(b)) > 0.05 * max(_total(a), 1):
+                    add("cache", "fail", f"cached tokens are not counted once: first call {_total(a)} total, second {_total(b)} (= {b.input_tokens} + {b.cache_read_tokens} cached). Reconciliation and costs would be off")
+                else:
+                    add("cache", "ok", f"repeat: {b.input_tokens} uncached + {b.cache_read_tokens} cached = {_total(b)}, first call {_total(a)}: counted once"
+                       + (f" (the cache was only there after a {CACHE_RETRY_WAIT_S:g} s wait)" if waited else "")
+                       + (f" (only on the longer prompt: the {tried[0]:,}-token one got no hit, so this provider caches above some minimum size)" if bigger and tried else ""))
         except Exception as e:  # noqa: BLE001
             add("cache", *_fail(e))
     return rep

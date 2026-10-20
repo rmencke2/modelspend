@@ -115,7 +115,7 @@ def test_an_unknown_model_error_must_be_normalized():
 def test_an_account_problem_makes_the_error_check_inconclusive_and_an_unclassified_error_shows_what_the_provider_said():
     for kind in ("quota", "auth", "rate_limit"):
         c = by(run(Fake(unknown=kind)))["errors"]
-        assert c.status == "skip" and "account reasons" in c.detail and kind in c.detail  # not the adapter's fault, so not a FAIL or WARN
+        assert c.status == "skip" and "account or capacity reasons" in c.detail and kind in c.detail  # not the adapter's fault, so not a FAIL or WARN
     w = by(run(Fake(unknown="unknown")))["errors"]
     assert w.status == "warn" and "model not found" in w.detail and "HTTP" in w.detail  # enough to diagnose without a debugger
 
@@ -234,7 +234,8 @@ def test_a_cache_that_is_built_a_few_seconds_late_is_found_after_one_wait():
 
 def test_no_hit_even_after_the_wait_is_inconclusive_and_waits_only_once_and_an_immediate_hit_never_waits():
     c = by(run(Fake(), cache=True))["cache"]
-    assert c.status == "skip" and "nor after a 5 s wait" in c.detail and WAITS == [5.0]
+    assert c.status == "skip" and "tried" not in c.detail and "no cache hit was reported for prompts of" in c.detail and "5 s wait" in c.detail
+    assert WAITS == [5.0, 5.0]  # one wait per prompt size, never more
     run(Fake(cached=(1024, 1024)), cache=True)
     assert WAITS == []
 
@@ -268,7 +269,7 @@ def test_the_cost_bound_covers_every_call_the_checks_can_make_including_the_cach
     m = CAT.get("openai/small")  # $0.10 in, $0.40 out per million
     plain = (60 * 3 * 0.1 + 2 * 512 * 0.4) / 1e6  # key and errors cost nothing; generate and stream each at the full allowance
     assert abs(plan_cost(m, cache=False) - plain) < 1e-12
-    with_cache = ((60 * 3 + 3 * 1600) * 0.1 + (2 + 3) * 512 * 0.4) / 1e6  # three long calls: first, repeat, and the repeat after a wait
+    with_cache = ((60 * 3 + 3 * 1600 + 3 * 1600 * 4) * 0.1 + (2 + 6) * 512 * 0.4) / 1e6  # six long calls: first, repeat and the repeat after a wait, for a short and a longer prompt
     assert abs(plan_cost(m, cache=True) - with_cache) < 1e-12
 
 
@@ -565,3 +566,84 @@ def test_verify_all_passes_the_timeout_through():
     t = Timed()
     asyncio.run(verify_all({"openai": t}, CAT, ["openai"], timeout_s=123.0))
     assert set(t.timeouts) == {123.0}
+
+
+# ---- a busy provider (Gemini answers HTTP 503 'high demand' at times) ----
+class Busy(Fake):
+    """Answers 503 'high demand' to the first `fail_first` attempts of each distinct call."""
+
+    def __init__(self, fail_first=1, always=False, status=503, message="This model is currently experiencing high demand. Spikes in demand are usually temporary.", **kw):
+        super().__init__(**kw)
+        self.fail_first, self.always, self.status, self.message, self.tries = fail_first, always, status, message, {}
+
+    def _gate(self, key):
+        self.tries[key] = self.tries.get(key, 0) + 1
+        if self.always or self.tries[key] <= self.fail_first:
+            raise ProviderError("openai", "server", self.message, self.status)
+
+    async def stream(self, req):
+        self._gate("stream")
+        async for x in super().stream(req):
+            yield x
+
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model":
+            self._gate("gen" if not req.response_schema and len(req.messages[0].content) < 1000 else "other")
+        return await super().generate(req)
+
+
+def test_a_busy_provider_is_waited_for_once_and_if_it_stays_busy_the_result_is_not_verified_not_failed():
+    lines: list[str] = []
+    r = run(Busy(fail_first=1), progress=lines.append)
+    assert r.status == "ok" and WAITS.count(8.0) >= 1 and any("overloaded (HTTP 503)" in ln and "waiting 8 s" in ln for ln in lines)
+    r2 = run(Busy(always=True))
+    assert r2.status == "skip" and by(r2)["generate"].status == "skip" and "overloaded right now" in by(r2)["generate"].detail
+    assert by(r2)["stream"].status == "skip" and WAITS == [8.0]  # waited once, then the rest were not attempted
+
+
+def test_a_plain_server_error_is_still_a_failure_and_is_not_retried():
+    r = run(Busy(always=True, status=500, message="internal error"))
+    assert by(r)["generate"].status == "fail" and r.status == "fail" and WAITS == []
+
+
+# ---- caches that only work above a minimum prompt size ----
+class BigOnly(Fake):
+    """Caches only prompts above ~20,000 characters (the longer prompt); the first sight of each prompt is never a hit."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.seen, self.long_calls = set(), 0
+
+    async def generate(self, req):
+        text = req.messages[0].content or ""
+        if len(text) > 1000 and not req.response_schema and req.model != "modelspend-verify-no-such-model":
+            self.long_calls += 1
+            first = text not in self.seen
+            self.seen.add(text)
+            total = max(1, len(text) // 4)
+            u = Usage(input_tokens=total, output_tokens=3) if (first or len(text) < 20000) else Usage(input_tokens=total - 1024, cache_read_tokens=1024, output_tokens=3)
+            return ProviderResponse(text="pong", usage=u)
+        return await super().generate(req)
+
+
+def test_a_provider_that_only_caches_long_prompts_is_found_with_the_longer_prompt():
+    ad = BigOnly()
+    c = by(run(ad, cache=True))["cache"]
+    assert c.status == "ok" and "only on the longer prompt" in c.detail and "counted once" in c.detail
+    assert ad.long_calls == 5  # three tries for the short prompt (first, repeat, repeat after the wait), then two for the long one: it hit on the repeat
+    assert WAITS == [5.0]  # one wait, for the short prompt; the long one hit at once
+
+
+def test_a_short_prompt_that_already_hits_never_triggers_the_longer_one():
+    ad = Fake(cached=(1024, 1024))
+    c = by(run(ad, cache=True))["cache"]
+    assert c.status == "ok" and "only on the longer prompt" not in c.detail and ad.long == 2 and WAITS == []
+
+
+def test_overload_is_recognised_by_status_or_by_wording_but_only_for_server_errors():
+    from modelspend.verify import _overloaded
+    assert _overloaded(ProviderError("g", "server", "backend error", 503))  # the status alone is enough
+    assert _overloaded(ProviderError("g", "server", "The model is overloaded. Please try again later.", 500))  # and so is the wording alone
+    assert not _overloaded(ProviderError("g", "server", "internal error", 500))
+    assert not _overloaded(ProviderError("g", "bad_request", "please try again later", 400))  # a bad request about our call is not the provider being busy
+    assert not _overloaded(ProviderError("g", "auth", "service unavailable", 503)) and not _overloaded(RuntimeError("503"))
