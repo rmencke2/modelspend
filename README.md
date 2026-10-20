@@ -1,6 +1,6 @@
 # ModelSpend
 
-Open-source cost control for LLM usage, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, and any other OpenAI-compatible endpoint you describe ([more providers](docs/providers.md); only the first four and DeepSeek are built in, and the extra ones are not yet run against live APIs). Two halves that work together:
+Open-source cost control for LLM usage, using **your own API keys** for OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, and any other OpenAI-compatible endpoint you describe ([more providers](docs/providers.md); only the first four and DeepSeek are built in; DeepSeek passed `modelspend verify` live on 2026-10-20, Gemini and xAI and the other providers have not been run against live APIs). Two halves that work together:
 
 1. **Know where the money goes.** Tag calls with a project and an agent, and see **tokens and cost per project, per agent, per model** (including what retries and escalations cost). Works even if you do not want routing: pin a model and ModelSpend only measures. See [docs/cost-attribution.md](docs/cost-attribution.md).
 2. **Spend less.** Route each task to **the lowest-cost model expected to suit it**, inside a token and dollar budget that covers every retry and escalation.
