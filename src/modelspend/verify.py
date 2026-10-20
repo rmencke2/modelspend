@@ -100,8 +100,8 @@ def _model_refused(e: BaseException) -> bool:
     return e.status_code == 404 or any(k in text for k in ("no longer available", "not found", "does not exist", "is not available", "not supported for"))
 
 
-def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None = None) -> ProviderRequest:
-    return ProviderRequest(model=model.id, messages=[Message(role="user", content=text)], max_output_tokens=max_out, response_schema=schema, timeout_s=60.0,
+def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None = None, timeout_s: float = 60.0) -> ProviderRequest:
+    return ProviderRequest(model=model.id, messages=[Message(role="user", content=text)], max_output_tokens=max_out, response_schema=schema, timeout_s=timeout_s,
                            reasoning_in_output=model.pricing.reasoning_in_output if model.pricing else True)
 
 
@@ -129,13 +129,13 @@ def _retry_after(e: BaseException) -> float:
 CALL_TIMEOUT_S = 90.0  # no single call may take longer: a provider that stalls is a finding, never a hang
 
 
-async def _retrying(op: Any, sleep: Any, say: Any = None) -> Any:
+async def _retrying(op: Any, sleep: Any, say: Any = None, scale: float = 1.0) -> Any:
     """Run `op()` (at most CALL_TIMEOUT_S); if the provider rate-limits it, wait as long as it asks (once) and run it again. Free tiers allow only a handful of requests a minute."""
     async def once() -> Any:
         try:
-            return await asyncio.wait_for(op(), CALL_TIMEOUT_S)
+            return await asyncio.wait_for(op(), CALL_TIMEOUT_S * scale)
         except asyncio.TimeoutError:
-            raise ProviderError("provider", "timeout", f"no answer within {CALL_TIMEOUT_S:g} s") from None
+            raise ProviderError("provider", "timeout", f"no answer within {CALL_TIMEOUT_S * scale:g} s") from None
     try:
         return await once()
     except ProviderError as e:
@@ -179,7 +179,7 @@ CACHE_RETRY_WAIT_S = 5.0  # some providers build their cache a few seconds after
 
 
 async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog, *, model: str | None = None, cache: bool = False,
-                          sleep: Any = asyncio.sleep, structured: bool = False, progress: Any = None) -> ProviderReport:
+                          sleep: Any = asyncio.sleep, structured: bool = False, progress: Any = None, timeout_s: float = 60.0, clock: Any = time.monotonic) -> ProviderReport:
     rep = ProviderReport(name, None)
 
     def say(text: str) -> None:
@@ -190,7 +190,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         rep.checks.append(Check(n, s, d))
         say(f"{n:<11}{MARK[s]:<5} {d[:200]}")  # shown as each check finishes, so a slow provider never looks like a hang
 
-    state: dict[str, Any] = {"blocked": None}
+    state: dict[str, Any] = {"blocked": None, "timeout": timeout_s}
 
     async def call(op: Any) -> Any:
         """Every provider call goes through here. Once the provider has refused for account reasons even after the one retry (no credit, a quota of zero),
@@ -198,7 +198,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         if state["blocked"] is not None:
             raise state["blocked"]
         try:
-            return await _retrying(op, sleep, say)
+            return await _retrying(op, sleep, say, state["timeout"] / 60.0)  # the hard cap grows with the allowance, so the two never disagree
         except ProviderError as e:
             if e.kind in BLOCKING:
                 state["blocked"] = e
@@ -243,9 +243,9 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     gen_err: BaseException | None = None
     while r is None and gen_err is None:
         try:
-            t0 = time.monotonic()
-            r = await call(lambda: adapter.generate(_req(m, PROMPT)))
-            ms = int((time.monotonic() - t0) * 1000)
+            t0 = clock()
+            r = await call(lambda: adapter.generate(_req(m, PROMPT, timeout_s=state["timeout"])))
+            ms = int((clock() - t0) * 1000)
         except Exception as e:  # noqa: BLE001
             if _model_refused(e) and fallbacks:
                 nxt = fallbacks.pop(0)
@@ -268,6 +268,10 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         except ValueError:
             pass
         facts = f"{u.input_tokens} in + {u.cache_read_tokens} cached, {_out(u)}, finish={r.finish_reason}, {ms} ms{cost}"
+        if ms / 1000 * 3 > state["timeout"]:  # a thinking model that needs 40 s for one word would be cut off on the next call: give it room in proportion
+            state["timeout"] = min(300.0, ms / 1000 * 3)
+            say(f"slow model ({ms / 1000:.0f} s for a one-word answer): allowing {state['timeout']:.0f} s per call from here")
+            facts += " (slow)"
         if u.output_tokens <= 0 or _total(u) <= 0:
             add("generate", "fail", f"the provider reported no token usage ({facts}): every cost for this provider would read zero")
         elif r.finish_reason == "length":
@@ -286,7 +290,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     try:
         async def consume() -> tuple[str, Any]:
             got, last = "", None
-            async for ch in adapter.stream(_req(m, PROMPT)):
+            async for ch in adapter.stream(_req(m, PROMPT, timeout_s=state["timeout"])):
                 if isinstance(ch, StreamEnd):
                     last = ch.response
                 else:
@@ -307,7 +311,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     claimed = bool(m.capabilities.structured_output)
     if claimed or structured:
         try:
-            r = await call(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA)))
+            r = await call(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA, timeout_s=state["timeout"])))
             try:
                 ok = json.loads(r.text).get("answer") == "pong"
             except (ValueError, AttributeError):
@@ -327,7 +331,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     # 6. cached-token accounting (opt in: ~3,000 input tokens)
     if cache:
         try:
-            long_call = lambda: adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))  # noqa: E731
+            long_call = lambda: adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT, timeout_s=state["timeout"]))  # noqa: E731
             a = (await call(long_call)).usage
             b = (await call(long_call)).usage
             waited = False
@@ -348,13 +352,13 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
 
 
 async def verify_all(adapters: dict[str, ProviderAdapter], catalog: Catalog, targets: list[str], *, model: str | None = None, cache: bool = False,
-                     structured: bool = False, progress: Any = None) -> list[ProviderReport]:
+                     structured: bool = False, progress: Any = None, timeout_s: float = 60.0) -> list[ProviderReport]:
     out = []
     for p in targets:
         if p not in adapters:
             out.append(ProviderReport(p, None, [Check("key", "skip", "no key configured")]))
             continue
-        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache, structured=structured, progress=progress))
+        out.append(await verify_provider(p, adapters[p], catalog, model=model if model and model.startswith(p + "/") else None, cache=cache, structured=structured, progress=progress, timeout_s=timeout_s))
     return out
 
 

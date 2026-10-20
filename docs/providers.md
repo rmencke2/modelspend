@@ -106,6 +106,8 @@ modelspend verify deepseek --cache --report deepseek-check.md
 
 ## Verifying Gemini (needs your own key)
 
+**Checked live so far (2026-10-20, free tier, `gemini-flash-latest`):** the key works, an unknown model fails as `bad_request`, and a completion reports usage as the adapter assumes (`93 out (of which 92 reasoning)`: thinking tokens are added into the output). **Not yet confirmed:** streaming usage and cached-token accounting, because that model took 43 s for a one-word answer and the later calls hit the 60 s limit (see *Slow models and timeouts*).
+
 The Gemini adapter uses Google's own SDK, so it has never been confirmed against the live API: it is tested against SDK-shaped fakes, and (2026-10-20) rehearsed with the real SDK against a local fake that copies Gemini's documented behaviour, which found and fixed the bugs in the changelog. That proves the procedure, not Gemini. A free key from Google AI Studio is enough (the free tier allows only a few requests a minute, and `verify` waits and retries when it is told to):
 
 ```
@@ -126,6 +128,10 @@ modelspend pricing refresh deepseek --extractor-model openai/gpt-4.1
 ```
 
 The extractor must support structured output, and ModelSpend only believes that after you have recorded it: if the run stops with "structured output not verified for this model", test it and record it in two commands (`modelspend verify openai --model openai/gpt-4.1 --structured`, then the `modelspend catalog set ... capabilities.structured_output=true` line it prints when the test passes). It prints a proposal id and a `modelspend pricing show ...` line to copy. Check the proposal against the page itself before applying, because three things are easy to get wrong on this page: **input must be the cache-MISS price and `cached input` the cache-HIT price** (the page lists both, and a model can swap them), a printed discount or off-peak price should be in the notes rather than the price, and the page's model names may differ from your catalog ids (`deepseek-v4-flash` on the page, `deepseek-flash` from the API). A row that matches no catalog model is shown with its verified prices and the `modelspend catalog price ...` command to record them if you agree it is the same model. When the proposal is right: `modelspend pricing apply <the proposal id>`. If the page cannot be fetched or read (some pages need JavaScript), copy the price table into a file and use `modelspend pricing paste deepseek --file table.txt`, which applies the same checks.
+
+## Slow models and timeouts
+
+A provider call may take 60 seconds by default. Thinking models can need far longer: on the free tier, `gemini-flash-latest` took 43 seconds to answer a one-word prompt, and the next, heavier calls hit the limit. Raise it with `MODELSPEND_REQUEST_TIMEOUT_S=180` or `"request_timeout_s": 180` in `settings.json` (1 to 3600 seconds). `modelspend verify` raises its own allowance after the first answer shows how slow a model is, and takes `--timeout <seconds>` for the starting value. A faster alternative for checking an adapter is a smaller model: `modelspend verify google --model google/gemini-flash-lite-latest`.
 
 ## Taking models back out
 

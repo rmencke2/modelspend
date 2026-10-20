@@ -2,6 +2,8 @@
 written to SQLite, logs, repr() output or error messages."""
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import os
 from dataclasses import dataclass, field
@@ -91,6 +93,20 @@ def save_settings(home: Path, data: dict) -> Path:
     private_mkdir(p.parent)
     p.write_text(json.dumps(data, indent=2, sort_keys=True))
     return p
+
+
+def _timeout(env: str | None, setting: Any, default: float = 60.0) -> float:
+    """How long one provider call may take: MODELSPEND_REQUEST_TIMEOUT_S, else "request_timeout_s" in settings.json, else 60. Thinking models can need much longer."""
+    raw: Any = env if env not in (None, "") else setting
+    if raw is None:
+        return default
+    try:
+        v = float(raw) if not isinstance(raw, bool) else float("nan")
+    except (TypeError, ValueError):
+        v = float("nan")
+    if not (0 < v <= 3600):
+        raise ValueError(f"the request timeout must be a number of seconds between 1 and 3600 (MODELSPEND_REQUEST_TIMEOUT_S or request_timeout_s in settings.json), got {raw!r}")
+    return v
 
 
 def _settings_bool(settings: dict, key: str, default: bool) -> bool:
@@ -283,6 +299,7 @@ class Config:
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             track_prefixes=_bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True)),
+            request_timeout_s=_timeout(e.get("MODELSPEND_REQUEST_TIMEOUT_S"), settings.get("request_timeout_s")),
             host=e.get("MODELSPEND_HOST", "127.0.0.1"),
             port=int(e.get("MODELSPEND_PORT", 8787)),
             api_token=e.get("MODELSPEND_API_TOKEN") or None,

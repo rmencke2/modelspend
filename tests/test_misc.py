@@ -1,4 +1,6 @@
 import os
+
+import pytest
 import sqlite3
 
 from modelspend import Config, ModelSpend
@@ -298,3 +300,24 @@ def test_a_broken_settings_file_gives_one_clear_line_not_a_traceback(tmp_path, m
     with pytest.raises(SystemExit) as ok:  # typer exits 0 after a successful command
         main()
     assert ok.value.code == 0 and "openai" in capsys.readouterr().out
+
+
+def test_the_request_timeout_can_be_set_by_environment_or_settings_and_bad_values_are_refused(tmp_path, monkeypatch):
+    """Found live (2026-10-20): a Gemini thinking model took 43 s for one word and the 60 s limit, which had no setting, cut off the next call."""
+    import json as _json
+    monkeypatch.setenv("MODELSPEND_HOME", str(tmp_path))
+    monkeypatch.delenv("MODELSPEND_REQUEST_TIMEOUT_S", raising=False)
+    assert Config.from_env().request_timeout_s == 60.0
+    (tmp_path / "settings.json").write_text(_json.dumps({"request_timeout_s": 120}))
+    assert Config.from_env().request_timeout_s == 120.0
+    monkeypatch.setenv("MODELSPEND_REQUEST_TIMEOUT_S", "180")
+    assert Config.from_env().request_timeout_s == 180.0  # the environment wins over the file
+    for bad in ("soon", "0", "-5", "5000", "nan"):
+        monkeypatch.setenv("MODELSPEND_REQUEST_TIMEOUT_S", bad)
+        with pytest.raises(ValueError, match="request timeout"):
+            Config.from_env()
+    monkeypatch.delenv("MODELSPEND_REQUEST_TIMEOUT_S")
+    for bad_setting in (True, "fast", 0, 99999):
+        (tmp_path / "settings.json").write_text(_json.dumps({"request_timeout_s": bad_setting}))
+        with pytest.raises(ValueError, match="request timeout"):
+            Config.from_env()

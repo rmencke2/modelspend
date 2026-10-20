@@ -712,6 +712,7 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
            model: Optional[str] = typer.Option(None, help="Check this model (provider/id) instead of the cheapest priced one."),
            cache: bool = typer.Option(False, "--cache", help="Also check cached-token accounting (two calls of about 1,500 input tokens)."),
            structured: bool = typer.Option(False, "--structured", help="Also test structured output even if the catalog does not claim it; if it works, the exact command to record that is printed."),
+           timeout: float = typer.Option(60.0, "--timeout", help="Seconds one call may take before it counts as stalled (raised automatically for a slow model; thinking models can need minutes)."),
            yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask before spending."),
            report_file: Optional[Path] = typer.Option(None, "--report", help="Also write a Markdown report you can paste into an issue (no keys, no prompts).")):
     """Live check of a provider on your own key: usage reporting, streaming, error handling, structured output (a fraction of a cent)."""
@@ -738,7 +739,7 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
                + (f", not counting {', '.join(unpriced)} (no price in your catalog: expect a fraction of a cent)." if unpriced else "."))
     if not yes and not typer.confirm("Go ahead?", default=True):
         raise typer.Exit(1)
-    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured, progress=lambda s: typer.echo(f"  {s}", err=True)))
+    reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured, progress=lambda s: typer.echo(f"  {s}", err=True), timeout_s=timeout))
     typer.echo("\nResult:\n" + to_table(reports))
     md = to_markdown(reports, __version__, str(_date.today()))
     if report_file:

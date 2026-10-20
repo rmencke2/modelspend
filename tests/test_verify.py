@@ -517,3 +517,51 @@ def test_when_every_candidate_has_a_quota_of_zero_it_is_not_verified_after_three
     ad = ZeroQuota(zero={"a", "b", "c", "d"}, models=("a", "b", "c", "d"))
     r = run(ad, catalog=bare("a", "b", "c", "d"))
     assert r.status == "skip" and len(ad.asked) == 3 and WAITS == [] and "no quota on your plan" in by(r)["generate"].detail
+
+
+# ---- slow (thinking) models ----
+class Timed(Fake):
+    """Records the timeout each call was given; `delay` is how long a real answer takes."""
+
+    def __init__(self, delay=0.0, **kw):
+        super().__init__(**kw)
+        self.delay, self.timeouts = delay, []
+
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model":
+            self.timeouts.append(req.timeout_s)
+            await asyncio.sleep(self.delay)
+        return await super().generate(req)
+
+
+def test_a_fast_model_keeps_the_default_allowance_and_a_slow_one_gets_room_in_proportion():
+    fast = Timed(delay=0.0)
+    run(fast, cache=True)
+    assert set(fast.timeouts) == {60.0}
+    slow = Timed(delay=0.02)
+    lines: list[str] = []
+    r = run(slow, cache=True, timeout_s=0.03, progress=lines.append)
+    assert slow.timeouts[0] == 0.03 and all(x > 0.03 for x in slow.timeouts[1:])  # raised after the first answer showed how slow it is
+    assert any("slow model" in ln and "allowing" in ln for ln in lines) and "(slow)" in by(r)["generate"].detail
+
+
+def test_the_allowance_is_raised_but_never_beyond_five_minutes():
+    ticks = iter([0.0, 200.0])  # the first answer "took" 200 s, which would ask for 600 s
+    g = Timed()
+    run(g, cache=True, clock=lambda: next(ticks))
+    assert g.timeouts[0] == 60.0 and all(x == 300.0 for x in g.timeouts[1:])  # capped at five minutes
+
+
+def test_the_hard_cap_on_a_single_call_grows_with_the_allowance_so_the_two_never_disagree(monkeypatch):
+    import modelspend.verify as vmod
+    monkeypatch.setattr(vmod, "CALL_TIMEOUT_S", 0.05)
+    r = run(Timed(delay=0.08), timeout_s=60.0)  # cap 0.05 s: an 0.08 s answer is cut off
+    assert by(r)["generate"].status == "fail" and "no answer within" in by(r)["generate"].detail
+    r2 = run(Timed(delay=0.08), timeout_s=120.0)  # allowance doubled, so the cap is 0.1 s and the same answer is accepted
+    assert by(r2)["generate"].status in ("ok", "warn")
+
+
+def test_verify_all_passes_the_timeout_through():
+    t = Timed()
+    asyncio.run(verify_all({"openai": t}, CAT, ["openai"], timeout_s=123.0))
+    assert set(t.timeouts) == {123.0}
