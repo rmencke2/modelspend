@@ -91,6 +91,10 @@ A mistake here would send your key to the wrong place or silently drop a provide
 
 Routing, budgets, per-project reports, shadow evaluation, savings and reconciliation treat these providers like the built-in ones: they are listed by `modelspend keys list` and `providers list`, appear in the dashboard, and use the same evidence bars. Structured output and tool calling stay **unverified** until you test them and mark them (`modelspend catalog set <provider>/<model> capabilities.structured_output=true`), so a request that needs them will not be sent to a model you have not confirmed.
 
+## Taking models back out
+
+`modelspend catalog remove 'openrouter/*:batch'` shows what it would remove; add `--yes` to do it. It only removes models you added (never shipped ones; for those use `modelspend models disable <ref>`), keeps the previous file as `overrides.json.bak`, and names any alias that pointed at a removed model. Quote patterns so your shell does not expand the `*`.
+
 ## Check a provider yourself: `modelspend verify`
 
 ```

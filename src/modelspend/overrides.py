@@ -47,6 +47,40 @@ def apply_assignments(cfg: Config, ref: str, assignments: list[str]) -> None:
         raise ValueError(f"invalid change, reverted: {str(e)[:300]}") from e
 
 
+def remove_added_models(cfg: Config, patterns: list[str], apply: bool = False) -> dict:
+    """Remove models YOU added (by `catalog sync --add-new`, `import-openrouter` or hand) whose `provider/id` matches a pattern (`*` and `?` work).
+    Shipped models are never touched: they are not in your overrides, and `models disable` is the way to keep one out of routing. Hand-set patches on a removed
+    model go with it (a patch for a model that no longer exists would make the whole catalog refuse to load). With apply=False nothing is written."""
+    import fnmatch
+    import shutil
+    pats = [p.strip() for p in patterns if p and p.strip()]
+    if not pats:
+        raise ValueError("give at least one model or pattern, e.g. 'openrouter/*:batch'")
+    ov = load_overrides(cfg)
+    added = {f"{m['provider']}/{m['id']}" for m in ov.get("add_models") or []}
+
+    def match(ref: str) -> bool:
+        return any(fnmatch.fnmatchcase(ref, p) for p in pats)
+
+    hit = sorted(r for r in added if match(r))
+    shipped = sorted(r for r in {m.ref for m in Catalog.from_config(cfg).models} - added if match(r))
+    aliases = sorted(a for a, target in cfg.aliases.items() if target in hit)
+    if apply and hit:
+        before = json.dumps(ov, sort_keys=True)
+        p = cfg.overrides_path
+        shutil.copy2(p, p.with_name(p.name + ".bak"))  # type: ignore[union-attr]
+        ov["add_models"] = [m for m in ov["add_models"] if f"{m['provider']}/{m['id']}" not in hit]
+        if ov.get("models"):
+            ov["models"] = {k: v for k, v in ov["models"].items() if k not in hit}
+        save_overrides(cfg, ov)
+        try:
+            Catalog.from_config(cfg)
+        except Exception as e:  # noqa: BLE001
+            save_overrides(cfg, json.loads(before))
+            raise ValueError(f"the catalog would not load after the removal, so nothing was changed: {str(e)[:300]}") from e
+    return {"removed": hit, "not_added": shipped, "aliases": aliases}
+
+
 PRICE_FIELDS = ("input_per_mtok", "output_per_mtok", "cached_input_per_mtok", "cache_write_per_mtok")
 
 

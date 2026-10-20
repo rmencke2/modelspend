@@ -962,7 +962,7 @@ def catalog_discover(catalog: Optional[str] = CAT,
     asyncio.run(go())
 
 
-from .overrides import apply_assignments, load_overrides as _load_overrides, save_overrides as _save_overrides  # noqa: E402
+from .overrides import apply_assignments, load_overrides as _load_overrides, remove_added_models as _remove_added, save_overrides as _save_overrides  # noqa: E402
 
 
 _SNAPSHOT = __import__("re").compile(r"-(\d{4}-\d{2}-\d{2}|\d{8}|\d{4})$")
@@ -1154,6 +1154,28 @@ def catalog_import_openrouter(
                    "Next: let shadow evaluation measure them against the model you use (`modelspend shadow on`), or set a tier yourself: modelspend catalog set openrouter/<id> tier=<1-3>")
     else:
         typer.echo("\ndry run: add --write to save.")
+
+
+@catalog_app.command("remove")
+def catalog_remove(patterns: list[str] = typer.Argument(..., help="Models you added, as provider/id; * and ? work, so quote patterns: 'openrouter/*:batch'."),
+                   yes: bool = typer.Option(False, "--yes", "-y", help="Remove them. Without it this is a dry run.")):
+    """Remove models you added (by sync, an import or hand). Shipped models are never touched. The old file is kept as overrides.json.bak."""
+    cfg = Config.from_env()
+    try:
+        r = _remove_added(cfg, patterns, apply=yes)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    for ref in r["not_added"]:
+        typer.echo(f"{ref} is a shipped model, not one you added, so it is left alone. To keep it out of routing: modelspend models disable {ref}", err=True)
+    if not r["removed"]:
+        typer.echo("no model you added matches " + ", ".join(patterns), err=True)
+        raise typer.Exit(1)
+    typer.echo(("removed " if yes else "would remove ") + f"{len(r['removed'])} model(s):\n  " + "\n  ".join(r["removed"]))
+    if r["aliases"]:
+        typer.echo("note: these aliases point at a removed model and will no longer resolve: " + ", ".join(r["aliases"]))
+    if not yes:
+        typer.echo("dry run: add --yes to remove them (the old file is kept as overrides.json.bak).")
 
 
 @catalog_app.command("set")
