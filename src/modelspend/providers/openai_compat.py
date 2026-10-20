@@ -23,6 +23,15 @@ def _g(obj: Any, name: str, default: Any = None) -> Any:
     return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
 
 
+def raw_usage(u: Any) -> dict[str, int] | None:
+    """The provider's own usage numbers, un-normalized (counts only). `modelspend verify` compares them to learn whether reasoning tokens sit inside completion_tokens."""
+    if u is None:
+        return None
+    vals = {"prompt_tokens": _g(u, "prompt_tokens", None), "completion_tokens": _g(u, "completion_tokens", None), "total_tokens": _g(u, "total_tokens", None),
+            "reasoning_tokens": _g(_g(u, "completion_tokens_details"), "reasoning_tokens", None)}
+    return {k: v for k, v in vals.items() if isinstance(v, int) and not isinstance(v, bool)} or None
+
+
 def normalize_usage(u: Any, reasoning_in_output: bool) -> Usage:
     if u is None:
         return Usage()
@@ -103,7 +112,7 @@ class OpenAICompatAdapter(ProviderAdapter):
             finish, text = "content_filter", msg.refusal
         return ProviderResponse(
             text=text, tool_calls=calls, finish_reason=finish, response_id=getattr(r, "id", None),
-            usage=normalize_usage(r.usage, req.reasoning_in_output), raw_finish_reason=choice.finish_reason,
+            usage=normalize_usage(r.usage, req.reasoning_in_output), raw_finish_reason=choice.finish_reason, raw_usage=raw_usage(r.usage),
         )
 
     async def stream(self, req: ProviderRequest) -> AsyncIterator[StreamChunk | StreamEnd]:
@@ -136,7 +145,7 @@ class OpenAICompatAdapter(ProviderAdapter):
         yield StreamEnd(response=ProviderResponse(
             text="".join(text), finish_reason=finish, response_id=rid,
             tool_calls=[ToolCall(**calls[i]) for i in sorted(calls)],
-            usage=normalize_usage(usage, req.reasoning_in_output),
+            usage=normalize_usage(usage, req.reasoning_in_output), raw_usage=raw_usage(usage),
         ))
 
     async def list_models(self) -> list[str]:

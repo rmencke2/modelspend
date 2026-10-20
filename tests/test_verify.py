@@ -84,7 +84,7 @@ class Fake(ScriptedAdapter):
 def test_a_well_behaved_provider_passes_every_check():
     r = run(Fake())
     assert r.status == "ok" and r.model == "openai/small"  # cheapest priced model, and the key can see it
-    assert [c.name for c in r.checks] == ["key", "errors", "generate", "stream", "structured"]
+    assert [c.name for c in r.checks] == ["key", "errors", "generate", "reasoning", "stream", "structured"]
     assert by(r)["structured"].status == "skip"  # the catalog makes no claim, so nothing to disprove
     assert "$0.0000" in by(r)["generate"].detail
 
@@ -647,3 +647,64 @@ def test_overload_is_recognised_by_status_or_by_wording_but_only_for_server_erro
     assert not _overloaded(ProviderError("g", "server", "internal error", 500))
     assert not _overloaded(ProviderError("g", "bad_request", "please try again later", 400))  # a bad request about our call is not the provider being busy
     assert not _overloaded(ProviderError("g", "auth", "service unavailable", 503)) and not _overloaded(RuntimeError("503"))
+
+
+# ---- how reasoning tokens are counted (xAI documents them as separate from completion_tokens, OpenAI and DeepSeek as inside) ----
+from modelspend.verify import reasoning_verdict  # noqa: E402
+
+
+def test_the_providers_own_totals_say_whether_reasoning_tokens_are_inside_completion_tokens():
+    inside = {"prompt_tokens": 10, "completion_tokens": 50, "total_tokens": 60, "reasoning_tokens": 40}
+    separate = {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 60, "reasoning_tokens": 40}
+    assert reasoning_verdict(inside, True, "x/y")[0] == "ok" and "inside completion_tokens" in reasoning_verdict(inside, True, "x/y")[1]
+    assert reasoning_verdict(separate, False, "x/y")[0] == "ok" and "separately" in reasoning_verdict(separate, False, "x/y")[1]
+    bad = reasoning_verdict(separate, True, "xai/grok-x")  # the catalog default says "inside" but the provider reports them separately
+    assert bad[0] == "fail" and "undercounted" in bad[1] and "modelspend catalog set xai/grok-x pricing.reasoning_in_output=false" in bad[1]
+    over = reasoning_verdict(inside, False, "p/m")
+    assert over[0] == "fail" and "overcounted" in over[1] and "pricing.reasoning_in_output=true" in over[1]
+
+
+def test_reasoning_accounting_is_inconclusive_rather_than_guessed_when_the_numbers_do_not_decide_it():
+    assert reasoning_verdict(None, True, "x/y")[0] == "skip" and "not applicable" in reasoning_verdict(None, True, "x/y")[1]
+    assert reasoning_verdict({"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}, True, "x/y")[0] == "skip"  # no reasoning tokens: nothing tested
+    assert "no reasoning tokens" in reasoning_verdict({"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8, "reasoning_tokens": 0}, True, "x/y")[1]
+    assert "not all of prompt" in reasoning_verdict({"completion_tokens": 3, "reasoning_tokens": 2}, True, "x/y")[1]
+    assert "matches neither" in reasoning_verdict({"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 99, "reasoning_tokens": 2}, True, "x/y")[1]
+
+
+class Thinker(Fake):
+    """Reports raw usage the way a reasoning model does, in the style named: 'inside' (OpenAI, DeepSeek) or 'separate' (xAI)."""
+
+    def __init__(self, style, **kw):
+        super().__init__(**kw)
+        self.style = style
+
+    async def generate(self, req):
+        if req.model == "modelspend-verify-no-such-model" or req.response_schema or len(req.messages[0].content or "") > 1000:
+            return await super().generate(req)
+        raw = ({"prompt_tokens": 10, "completion_tokens": 50, "total_tokens": 60, "reasoning_tokens": 40} if self.style == "inside"
+               else {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 60, "reasoning_tokens": 40})
+        return ProviderResponse(text="pong", usage=Usage(input_tokens=10, output_tokens=50, reasoning_tokens=40), raw_usage=raw)
+
+
+def test_verify_reports_a_reasoning_miscount_with_the_exact_fix_and_passes_when_the_catalog_agrees():
+    ok = by(run(Thinker("inside")))["reasoning"]  # an unpriced or default-priced model assumes 'inside'
+    assert ok.status == "ok" and "counted once" in ok.detail
+    r = run(Thinker("separate"))
+    assert by(r)["reasoning"].status == "fail" and r.status == "fail"
+    assert "pricing.reasoning_in_output=false" in by(r)["reasoning"].detail
+    sep = _m("openai", "small", 0.1, 0.4)
+    sep["pricing"]["reasoning_in_output"] = False  # what `catalog price --reasoning-separate` records
+    fixed = Catalog.load(overrides={"add_models": [sep]})
+    assert by(run(Thinker("separate"), catalog=fixed))["reasoning"].status == "ok"
+    assert by(run(Thinker("inside"), catalog=fixed))["reasoning"].status == "fail"  # and the wrong way round is caught too
+
+
+def test_a_reply_without_reasoning_or_raw_usage_skips_the_check():
+    assert by(run(Fake()))["reasoning"].status == "skip"
+
+
+def test_image_video_and_speech_models_are_never_the_default_pick():
+    ids = ("grok-imagine-image", "grok-4", "grok-imagine-video", "grok-3-mini", "text-video", "text-speech", "grok-imagine-x")
+    order = [m.id for m in pick_models(bare(*ids, provider="xai"), "xai", set(ids))]
+    assert order == ["grok-3-mini", "grok-4", "grok-imagine-image", "grok-imagine-video", "grok-imagine-x", "text-speech", "text-video"]  # exact: each marker matters on its own

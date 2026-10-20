@@ -33,6 +33,7 @@ class ProviderResponse(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     response_id: str | None = None
     raw_finish_reason: str | None = None
+    raw_usage: dict[str, int] | None = None  # what the provider reported before normalization (numbers only): lets `modelspend verify` check how reasoning tokens are counted
 
 
 class StreamChunk(BaseModel):
@@ -68,7 +69,8 @@ class ProviderAdapter(ABC):
 
 # Account has no credit / hit a spending cap: retrying the same provider cannot help (unlike a transient 429).
 _QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exceeded your current quota", "billing_hard_limit",
-                  "insufficient balance", "insufficient_balance")  # the last two: DeepSeek answers HTTP 402 "Insufficient Balance" when the account has no credit
+                  "insufficient balance", "insufficient_balance",
+                  "doesn't have any credits", "does not have any credits", "credits or licenses")  # the last two: DeepSeek answers HTTP 402 "Insufficient Balance" when the account has no credit
 
 
 _ZERO_QUOTA = re.compile(r"limit:\s*0\b", re.I)

@@ -96,6 +96,7 @@ async def test_openai_stream_with_usage():
     assert "".join(e.text for e in evs if isinstance(e, StreamChunk)) == "hello"
     end = evs[-1]
     assert isinstance(end, StreamEnd) and end.response.usage.output_tokens == 2
+    assert end.response.raw_usage == {"prompt_tokens": 10, "completion_tokens": 2}  # the streamed final usage is carried raw too
 
 
 async def test_xai_uses_xai_base_url_and_reasoning_flag():
@@ -389,3 +390,22 @@ def test_a_limit_of_zero_is_recognised_even_when_it_sits_past_the_truncation_poi
     five = classify_exception("google", type("ClientError", (Exception,), {"code": 429})(long.replace("limit: 0,", "limit: 5,")))
     assert not five.zero_quota and five.kind == "rate_limit"
     assert not classify_exception("openai", type("E", (Exception,), {"status_code": 400})("model not found")).zero_quota
+
+
+async def test_the_response_carries_the_providers_raw_usage_numbers_for_generate_and_stream():
+    """`modelspend verify` compares them to learn whether reasoning tokens sit inside completion_tokens. Counts only, never text."""
+    usage = NS(prompt_tokens=100, completion_tokens=20, total_tokens=125, prompt_tokens_details=NS(cached_tokens=40), completion_tokens_details=NS(reasoning_tokens=5))
+    resp = oa_response()
+    resp.usage = usage
+    r = await OpenAICompatAdapter("k", client=FakeOpenAI(resp)).generate(preq())
+    assert r.raw_usage == {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 125, "reasoning_tokens": 5}
+    assert r.usage.output_tokens == 20  # normalization is unchanged
+    from modelspend.providers.openai_compat import raw_usage
+    assert raw_usage(None) is None and raw_usage(NS()) is None and raw_usage(NS(prompt_tokens=True, completion_tokens="x")) is None  # junk is ignored, never invented
+
+
+def test_xai_style_no_credit_errors_are_a_quota_error_not_an_auth_error():
+    e = type("PermissionDeniedError", (Exception,), {"status_code": 403})("Error code: 403 - Your newly created teams doesn't have any credits or licenses yet. You can purchase credits on the console.")
+    k = classify_exception("xai", e)
+    assert k.kind == "quota" and k.kind in ProviderError.FAILOVER  # an empty account, not a bad key: it must not read as an auth failure
+    assert classify_exception("xai", type("E", (Exception,), {"status_code": 403})("forbidden")).kind == "auth"  # a plain 403 still is

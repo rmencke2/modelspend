@@ -59,7 +59,7 @@ class ProviderReport:
 
 
 # names that mark a model as something other than a plain text model (speech, images, live audio, ...): never the default pick
-NOT_PLAIN_TEXT = ("tts", "image", "audio", "live", "embed", "omni", "imagen", "veo", "transcribe", "native", "robotics", "computer", "guard")
+NOT_PLAIN_TEXT = ("tts", "image", "audio", "live", "embed", "omni", "imagen", "imagine", "video", "speech", "veo", "transcribe", "native", "robotics", "computer", "guard")
 PREVIEWS = ("preview", "exp", "beta")
 
 
@@ -175,6 +175,26 @@ def _fail(e: BaseException) -> tuple[str, str]:
 def _out(u: Usage) -> str:
     """Output tokens, with the thinking part named: a reasoning model's cost depends on it being counted once, inside the output."""
     return f"{u.output_tokens} out" + (f" (of which {u.reasoning_tokens} reasoning)" if u.reasoning_tokens else "")
+
+
+def reasoning_verdict(raw: dict[str, int] | None, assumed_inside: bool, ref: str) -> tuple[str, str]:
+    """Do the provider's own numbers agree with how the catalog says reasoning tokens are counted? If completion_tokens already includes them the provider's total_tokens is
+    prompt + completion; if they are reported separately it is prompt + completion + reasoning. A wrong setting silently under- or over-counts every reasoning model's cost."""
+    if not raw:
+        return "skip", "not applicable: this adapter does not expose the provider's raw usage (the Gemini adapter adds thought tokens into the output itself)"
+    r, p, c, t = raw.get("reasoning_tokens", 0), raw.get("prompt_tokens"), raw.get("completion_tokens"), raw.get("total_tokens")
+    if not r:
+        return "skip", "this reply had no reasoning tokens, so how they are counted was not tested (name a reasoning model with --model to test it)"
+    if p is None or c is None or t is None:
+        return "skip", f"inconclusive: the provider reported {r} reasoning tokens but not all of prompt, completion and total tokens"
+    inside, separate = t == p + c, t == p + c + r
+    if inside == separate:
+        return "skip", f"inconclusive: total {t} matches neither prompt {p} + completion {c} (reasoning inside) nor that plus {r} reasoning (separate)"
+    if inside == assumed_inside:
+        return "ok", f"{r} reasoning tokens are reported {'inside completion_tokens' if inside else 'separately from completion_tokens'}, as the catalog says: counted once"
+    return "fail", (f"{r} reasoning tokens are reported {'inside completion_tokens' if inside else 'separately from completion_tokens'} (total {t} = prompt {p} + completion {c}"
+                    f"{'' if inside else f' + reasoning {r}'}), but the catalog says the opposite, so this model's output cost is "
+                    f"{'over' if inside else 'under'}counted. Fix: modelspend catalog set {ref} pricing.reasoning_in_output={'true' if inside else 'false'}")
 
 
 def _total(u: Usage) -> int:
@@ -301,6 +321,8 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         add("generate", *_fail(e))
         if _model_refused(e):
             return rep  # every later step would ask the same refused model again
+    if gen_err is None and r is not None:
+        add("reasoning", *reasoning_verdict(getattr(r, "raw_usage", None), m.pricing.reasoning_in_output if m.pricing else True, m.ref))
     # 4. stream
     try:
         async def consume() -> tuple[str, Any]:

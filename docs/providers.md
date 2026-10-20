@@ -129,6 +129,19 @@ modelspend pricing refresh deepseek --extractor-model openai/gpt-4.1
 
 The extractor must support structured output, and ModelSpend only believes that after you have recorded it: if the run stops with "structured output not verified for this model", test it and record it in two commands (`modelspend verify openai --model openai/gpt-4.1 --structured`, then the `modelspend catalog set ... capabilities.structured_output=true` line it prints when the test passes). It prints a proposal id and a `modelspend pricing show ...` line to copy. Check the proposal against the page itself before applying, because three things are easy to get wrong on this page: **input must be the cache-MISS price and `cached input` the cache-HIT price** (the page lists both, and a model can swap them), a printed discount or off-peak price should be in the notes rather than the price, and the page's model names may differ from your catalog ids (`deepseek-v4-flash` on the page, `deepseek-flash` from the API). A row that matches no catalog model is shown with its verified prices and the `modelspend catalog price ...` command to record them if you agree it is the same model. When the proposal is right: `modelspend pricing apply <the proposal id>`. If the page cannot be fetched or read (some pages need JavaScript), copy the price table into a file and use `modelspend pricing paste deepseek --file table.txt`, which applies the same checks.
 
+## Verifying xAI (needs your own key, with credit)
+
+Not yet run against xAI. The adapter is the OpenAI-compatible one, rehearsed against a local fake with xAI's documented quirks (reasoning tokens reported separately, an account with no credits answering HTTP 403). `modelspend verify` checks the part that is easiest to get silently wrong: **how reasoning tokens are counted**. It compares the provider's `total_tokens` with `prompt + completion` and `prompt + completion + reasoning`; if the catalog's `reasoning_in_output` setting disagrees, it FAILs and prints the one command that fixes it.
+
+```
+modelspend keys set xai            # paste the key when asked; it is not echoed
+modelspend keys test xai
+modelspend catalog sync --provider xai --add-new --only grok --write
+modelspend verify xai --cache --report xai-check.md
+```
+
+If the `reasoning` line says "this reply had no reasoning tokens", the default model was not a reasoning one: run it again with `--model` and a reasoning model's name copied from the sync output. A `FAIL` on `reasoning` is the finding the check exists for: run the command it prints, then run `verify` again.
+
 ## Slow models and timeouts
 
 A provider call may take 60 seconds by default. Thinking models can need far longer: on the free tier, `gemini-flash-latest` took 43 seconds to answer a one-word prompt, and the next, heavier calls hit the limit. Raise it with `MODELSPEND_REQUEST_TIMEOUT_S=180` or `"request_timeout_s": 180` in `settings.json` (1 to 3600 seconds). `modelspend verify` raises its own allowance after the first answer shows how slow a model is, and takes `--timeout <seconds>` for the starting value. A faster alternative for checking an adapter is a smaller model: `modelspend verify google --model google/gemini-flash-lite-latest`.
