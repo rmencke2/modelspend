@@ -1616,7 +1616,8 @@ def sources_reset(provider: str):
     """Go back to the shipped URL for a provider."""
     prov = _prov(provider)
     set_user_source(Config.from_env(), prov, None)
-    typer.echo(f"{prov}: using {resolve_sources(Config.from_env(), env={})[prov].pricing_url}")
+    src = resolve_sources(Config.from_env(), env={}).get(prov)
+    typer.echo(f"{prov}: using {src.pricing_url}" if src else f"{prov}: no shipped pricing URL (it has none to go back to)")
 
 
 @sources_app.command("check")
@@ -1625,6 +1626,10 @@ def sources_check(provider: Optional[str] = typer.Argument(None),
     """Fetch each pricing page and say whether it CHANGED since your last accepted baseline. Never edits prices."""
     cfg = Config.from_env()
     srcs = resolve_sources(cfg)
+    if provider and _prov(provider) not in srcs:
+        from .pricing_refresh import no_page_detail
+        typer.echo(no_page_detail(_prov(provider)), err=True)
+        raise typer.Exit(2)
     targets = [srcs[_prov(provider)]] if provider else [srcs[p] for p in registry.all_providers() if p in srcs]
     changed = 0
     for s in targets:
@@ -1654,6 +1659,10 @@ def _print_result(r: dict) -> None:
                      ("ambiguous", "ambiguous rows (same name twice, e.g. tiers)")):
         if r.get(k):
             typer.echo(f"          - {r[k]} {label}")
+    from .pricing_refresh import describe_unmatched
+    for row in r.get("unmatched_rows") or []:
+        for line in describe_unmatched(row, r["provider"]):
+            typer.echo(f"          {line}")
     if r.get("page_truncated"):
         typer.echo("          - page text was truncated before extraction: some models may be missing")
     if r.get("proposal_id"):
@@ -1666,7 +1675,7 @@ async def _refresh_many(cfg, eng, targets, **kw) -> list[dict]:
 
 
 @pricing_app.command("refresh")
-def pricing_refresh(provider: Optional[str] = typer.Argument(None, help="One provider, or omit for all four."),
+def pricing_refresh(provider: Optional[str] = typer.Argument(None, help="One provider (openai, anthropic, google, xai, deepseek), or omit for all of them."),
                     auto_apply: bool = typer.Option(False, "--auto-apply", help="Apply without review when every row is verified, only catalog models change, and no change exceeds --max-change-pct."),
                     max_change_pct: float = typer.Option(50.0, help="Largest price change --auto-apply may apply."),
                     force: bool = typer.Option(False, help="Re-extract even if the page is unchanged since your baseline."),
@@ -1678,7 +1687,7 @@ def pricing_refresh(provider: Optional[str] = typer.Argument(None, help="One pro
     Exit code 0 = nothing to review, 10 = proposals pending review, 1 = an error occurred. Safe to run from cron."""
     cfg = Config.from_env()
     eng = _pricing_engine(cfg, catalog)
-    targets = [_prov(provider)] if provider else list(registry.all_providers())
+    targets = [_prov(provider)] if provider else [p for p in registry.all_providers() if p in resolve_sources(cfg)]  # a provider with no pricing page is skipped, not a crash
     results = asyncio.run(_refresh_many(cfg, eng, targets, force=force, auto_apply=auto_apply, max_change_pct=max_change_pct,
                                         providers=[p.strip() for p in providers.split(",")] if providers else None,
                                         max_tokens=max_tokens, extractor_model=extractor_model))
@@ -1739,7 +1748,12 @@ def pricing_show(proposal_id: str):
         for f in c["fields"]:
             old = "unset" if f["old"] is None else f"${f['old']}"
             typer.echo(f"      {f['field']:<24}{old:>10} -> ${f['new']}" + (f"   ({f['pct']:+g}%)" if f["pct"] is not None else ""))
-    for k, label in (("unmatched", "No catalog model matches"), ("unverified", "REJECTED (not found in the page text)"), ("ambiguous", "Ambiguous")):
+    from .pricing_refresh import describe_unmatched
+    for x in p["unmatched"]:
+        typer.echo("  No catalog model matches:")
+        for line in describe_unmatched(x, p["provider"]):
+            typer.echo(f"    {line}")
+    for k, label in (("unverified", "REJECTED (not found in the page text)"), ("ambiguous", "Ambiguous")):
         for x in p[k]:
             typer.echo(f"  {label}: {x['name']}" + (f"  ({'; '.join(x['problems'])})" if x.get("problems") else ""))
     for n in p["notes"]:

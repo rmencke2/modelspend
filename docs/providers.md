@@ -117,6 +117,16 @@ modelspend verify google --cache --report gemini-check.md
 
 `verify` needs no price. If it picks a model you do not want (an image or audio variant), name one: `modelspend verify google --model google/<model>`. Paste the report, FAILs and WARNs included.
 
+## Pricing DeepSeek from its own page (needs your key; costs a few cents)
+
+`modelspend pricing refresh deepseek` fetches DeepSeek's pricing page, has a model read the price rows (the tokens are counted in your usage like any other call), then **rejects any row whose name or numbers do not appear verbatim in the page text** and queues what is left as a proposal you review. It has never been run against DeepSeek's real page. To try it (pinning the extractor keeps the first run predictable):
+
+```
+modelspend pricing refresh deepseek --extractor-model openai/gpt-4.1
+```
+
+It prints a proposal id and a `modelspend pricing show ...` line to copy. Check the proposal against the page itself before applying, because three things are easy to get wrong on this page: **input must be the cache-MISS price and `cached input` the cache-HIT price** (the page lists both, and a model can swap them), a printed discount or off-peak price should be in the notes rather than the price, and the page's model names may differ from your catalog ids (`deepseek-v4-flash` on the page, `deepseek-flash` from the API). A row that matches no catalog model is shown with its verified prices and the `modelspend catalog price ...` command to record them if you agree it is the same model. When the proposal is right: `modelspend pricing apply <the proposal id>`. If the page cannot be fetched or read (some pages need JavaScript), copy the price table into a file and use `modelspend pricing paste deepseek --file table.txt`, which applies the same checks.
+
 ## Taking models back out
 
 `modelspend catalog remove 'openrouter/*:batch'` shows what it would remove; add `--yes` to do it. It only removes models you added (never shipped ones; for those use `modelspend models disable <ref>`), keeps the previous file as `overrides.json.bak`, and names any alias that pointed at a removed model. Quote patterns so your shell does not expand the `*`.

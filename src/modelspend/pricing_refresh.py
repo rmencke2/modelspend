@@ -95,6 +95,13 @@ def verify_entry(entry: dict, page_text: str) -> list[str]:
     return problems
 
 
+def no_page_detail(provider: str) -> str:
+    """Why a provider has no pricing page to read, and what to do instead."""
+    if provider == "openrouter":
+        return "OpenRouter has no pricing page to read: its prices come from its own model list (`modelspend catalog import-openrouter --refresh`)"
+    return f"{provider} has no pricing page configured (a local server has no prices; for a hosted one: `modelspend sources set {provider} <url>`)"
+
+
 def match_models(name: str, catalog: Catalog, provider: str) -> list[str]:
     key = norm(name)
     out = []
@@ -103,6 +110,39 @@ def match_models(name: str, catalog: Catalog, provider: str) -> list[str]:
             continue
         if key and key in {norm(m.id), norm(m.display_name or "")}:
             out.append(m.ref)
+    return out
+
+
+def _words(s: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+def suggest_refs(name: str, catalog: Catalog, provider: str) -> list[str]:
+    """Catalog models a price row might be about when its printed name is not exactly a model id (a page says `deepseek-v4-flash`, the API lists
+    `deepseek-flash`): one's words contain the other's and at least two words are shared ('deepseek' alone is not enough). A suggestion only: nothing is applied."""
+    page = _words(name)
+    found = []
+    for m in catalog.models:
+        if m.provider != provider:
+            continue
+        mine = _words(m.id)
+        if len(mine & page) >= 2 and (mine <= page or page <= mine):
+            found.append((len(mine ^ page), m.ref))
+    return [ref for _, ref in sorted(found)]
+
+
+def describe_unmatched(row: dict, provider: str) -> list[str]:
+    """Human lines for a price row that matched no catalog model: the verified prices, and the command that would record them if the guess is right."""
+    got = [(f, row[f]) for f in PRICE_FIELDS if f in row]
+    shown = ", ".join(f"{f.replace('_per_mtok', '').replace('_', ' ')} ${v:g}" for f, v in got)
+    flags = {"input_per_mtok": "--input", "output_per_mtok": "--output", "cached_input_per_mtok": "--cached", "cache_write_per_mtok": "--cache-write"}
+    out = [f"page row '{row['name']}': {shown} per million tokens (verified in the page text)"]
+    guesses = row.get("suggest") or []
+    if guesses and "input_per_mtok" in row and "output_per_mtok" in row:
+        args = " ".join(f"{flags[f]} {v:g}" for f, v in got)
+        out += [f"   if that is {ref}: modelspend catalog price {ref} {args}" for ref in guesses[:3]]
+    else:
+        out.append(f"   no {provider} model in your catalog looks like it: add it with `modelspend catalog sync --provider {provider} --add-new --only <id> --write`, then `catalog price`")
     return out
 
 
@@ -210,7 +250,9 @@ async def refresh_provider(
 ) -> dict:
     """One provider, end to end. Returns a result dict whose `state` is one of:
     unchanged | pending_exists | no_changes | proposed | applied | error (with `detail`)."""
-    src = resolve_sources(cfg)[provider]
+    src = resolve_sources(cfg).get(provider)
+    if src is None:
+        return {"provider": provider, "state": "error", "detail": no_page_detail(provider)}
     kind, page_hash = ("pasted", None) if text is not None else ("fetched", None)
     if text is None:
         try:
@@ -247,7 +289,7 @@ async def refresh_provider(
         refs = match_models(e["name"], catalog, provider)
         seen[norm(e["name"])] = seen.get(norm(e["name"]), 0) + 1
         if not refs:
-            unmatched.append({"name": e["name"], **{f: e[f] for f in PRICE_FIELDS if f in e}})
+            unmatched.append({"name": e["name"], **{f: e[f] for f in PRICE_FIELDS if f in e}, "suggest": suggest_refs(e["name"], catalog, provider)})
         elif len(refs) > 1 or seen[norm(e["name"])] > 1:
             ambiguous.append({"name": e["name"], "refs": refs, "reason": "several rows or several catalog models share this name"})
         else:
@@ -265,7 +307,7 @@ async def refresh_provider(
         "unverified": unverified, "page_truncated": truncated,
         "notes": ["tiered / long-context prices, reasoning-token handling and other conditions are NOT extracted: review the page"],
     }
-    result = {"provider": provider, "extractor": meta, "changes": len(changes), "unmatched": len(unmatched),
+    result = {"provider": provider, "extractor": meta, "changes": len(changes), "unmatched": len(unmatched), "unmatched_rows": unmatched,
               "unverified": len(unverified), "ambiguous": len(ambiguous), "page_truncated": truncated}
     if not changes:
         if kind == "fetched" and not unverified:

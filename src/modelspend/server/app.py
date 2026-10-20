@@ -555,7 +555,10 @@ def create_app(engine: Engine, cfg: Config | None = None, reload_catalog: Callab
     @app.post("/v1/sources/{provider}/check", dependencies=[Depends(auth), Depends(guard)])
     async def sources_check(provider: str, request: Request):
         body = await _json(request)
-        src = resolve_sources(cfg)[_provider(provider)]
+        src = resolve_sources(cfg).get(_provider(provider))
+        if src is None:
+            from ..pricing_refresh import no_page_detail
+            raise InvalidRequest(no_page_detail(provider), param="provider")
         return await asyncio.to_thread(check_source, cfg, src, bool(body.get("accept")))
 
     @app.post("/v1/pricing/refresh", dependencies=[Depends(auth), Depends(guard)])
