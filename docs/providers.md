@@ -91,6 +91,19 @@ A mistake here would send your key to the wrong place or silently drop a provide
 
 Routing, budgets, per-project reports, shadow evaluation, savings and reconciliation treat these providers like the built-in ones: they are listed by `modelspend keys list` and `providers list`, appear in the dashboard, and use the same evidence bars. Structured output and tool calling stay **unverified** until you test them and mark them (`modelspend catalog set <provider>/<model> capabilities.structured_output=true`), so a request that needs them will not be sent to a model you have not confirmed.
 
+## Verifying DeepSeek (needs your own key)
+
+Nothing about DeepSeek has been confirmed against the live API yet: the preset follows its documented address, `max_tokens` parameter and cache fields (`prompt_cache_hit_tokens`) and is tested against fakes. A full rehearsal of the commands below against a local fake with DeepSeek's documented quirks (late-built cache, HTTP 400 for an unknown model) passes, which proves the procedure, not DeepSeek. To check the real thing, create an API key on DeepSeek's platform (add a small balance if it asks: the check costs a fraction of a cent), then:
+
+```
+modelspend keys set deepseek       # paste the key when asked; it is not echoed
+modelspend keys test deepseek
+modelspend catalog sync --provider deepseek --add-new --only deepseek --write
+modelspend verify deepseek --cache --report deepseek-check.md
+```
+
+`verify` needs no price. Afterwards, to price DeepSeek's models, copy the numbers from DeepSeek's own pricing page (`modelspend sources check deepseek` shows the link and whether it changed) into `modelspend catalog price deepseek/<model> --input <usd/M> --output <usd/M> --cached <usd/M>`. A FAIL or WARN in the report is the finding: paste it into an issue.
+
 ## Taking models back out
 
 `modelspend catalog remove 'openrouter/*:batch'` shows what it would remove; add `--yes` to do it. It only removes models you added (never shipped ones; for those use `modelspend models disable <ref>`), keeps the previous file as `overrides.json.bak`, and names any alias that pointed at a removed model. Quote patterns so your shell does not expand the `*`.

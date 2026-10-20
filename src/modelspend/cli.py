@@ -732,7 +732,9 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
     typer.echo("This sends a few tiny requests to each provider, directly (they are not recorded in your ledger):")
     for t, m in plan:
         typer.echo(f"  {t:<12}{m.ref if m else '(no priced model in your catalog: only the key check will run)'}")
-    typer.echo(f"Most it can cost: about ${bound:.4f} (every call at its full output allowance; usually a tenth of that).")
+    unpriced = [m.ref for _, m in plan if m and not (m.pricing and m.pricing.known)]
+    typer.echo(f"Most it can cost: about ${bound:.4f} (every call at its full output allowance; usually a tenth of that)"
+               + (f", not counting {', '.join(unpriced)} (no price in your catalog: expect a fraction of a cent)." if unpriced else "."))
     if not yes and not typer.confirm("Go ahead?", default=True):
         raise typer.Exit(1)
     reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache))

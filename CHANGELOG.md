@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`modelspend verify` works on a provider you have just synced, and waits for a late cache.** Found by rehearsing a DeepSeek-style setup against a local fake API (no DeepSeek key was available): with no model priced yet, `verify <provider>` ran only the key check and told you to set prices first, though the checks need a model, not a price. It now picks a model the key can see (a priced one if there is one, never a retired one), says that no cost is shown, and prints that the cost bound excludes unpriced models instead of "$0.0000". The `--cache` check no longer gives up when the first repeat shows no cache hit: providers that build their cache a few seconds after the first call (DeepSeek documents this) were reported as "inconclusive", so it now waits 5 s and repeats once, and says so when the cache was only there after the wait. The worst-case cost bound covers the extra call. **This was rehearsed against a fake, not DeepSeek: the live check still needs a key.**
+
 ## 0.8.0b1 - 2026-10-20
 
 - **`modelspend catalog remove <provider/id or pattern> [--yes]`.** Takes back models you added (by `catalog sync --add-new`, `import-openrouter` or by hand), for example `modelspend catalog remove 'openrouter/*:batch' --yes`. Dry run unless `--yes`; shipped models are never touched (it points you to `models disable`); hand-set patches on a removed model go with it (a leftover patch would make the whole catalog refuse to load); the catalog is re-validated afterwards and the old file is restored if it would not load; the previous file is kept as `overrides.json.bak`; aliases that pointed at a removed model are named. Found needed when a first real `import-openrouter --write` (made before the `:batch` fix) added six batch variants and there was no way to take them back without editing JSON.

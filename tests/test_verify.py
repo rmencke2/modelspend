@@ -3,6 +3,7 @@ something. (The real APIs are checked by running `modelspend verify` on your own
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from typer.testing import CliRunner
@@ -25,8 +26,16 @@ def cat(*extra):
 CAT = cat()
 
 
+WAITS: list[float] = []
+
+
+async def _fast(seconds):  # never really wait in tests; remember what was asked for
+    WAITS.append(seconds)
+
+
 def run(adapter, **kw):
-    return asyncio.run(verify_provider("openai", adapter, kw.pop("catalog", CAT), **kw))
+    WAITS.clear()
+    return asyncio.run(verify_provider("openai", adapter, kw.pop("catalog", CAT), sleep=_fast, **kw))
 
 
 def by(rep):
@@ -163,3 +172,60 @@ def test_the_stream_line_shows_cached_tokens_so_a_cache_split_is_not_mistaken_fo
             yield StreamEnd(response=r.model_copy(update={"usage": Usage(input_tokens=1, cache_read_tokens=11, output_tokens=3)}))
     c = by(run(Cached()))["stream"]
     assert c.status == "ok" and "1 in + 11 cached" in c.detail  # 12 in total, the same as the non-streamed call
+
+
+class Delayed(Fake):
+    """A provider whose cache is built a few seconds after the first sight of a prompt (DeepSeek documents this): hits start on the third long call."""
+
+    async def generate(self, req):
+        if req.model != "modelspend-verify-no-such-model" and not req.response_schema and len(req.messages[0].content) > 1000:
+            self.long += 1
+            u = Usage(input_tokens=1500, output_tokens=3) if self.long < 3 else Usage(input_tokens=476, cache_read_tokens=1024, output_tokens=3)
+            return ProviderResponse(text="pong", usage=u)
+        return await super().generate(req)
+
+
+def test_a_cache_that_is_built_a_few_seconds_late_is_found_after_one_wait():
+    r = run(Delayed(), cache=True)
+    c = by(r)["cache"]
+    assert c.status == "ok" and "only there after a 5 s wait" in c.detail and WAITS == [5.0]
+
+
+def test_no_hit_even_after_the_wait_is_inconclusive_and_waits_only_once_and_an_immediate_hit_never_waits():
+    c = by(run(Fake(), cache=True))["cache"]
+    assert c.status == "skip" and "nor after a 5 s wait" in c.detail and WAITS == [5.0]
+    run(Fake(cached=(1024, 1024)), cache=True)
+    assert WAITS == []
+
+
+def test_a_provider_with_nothing_priced_still_gets_every_check_on_a_model_the_key_can_see():
+    unpriced = Catalog.load(overrides={"add_models": [{"provider": "openai", "id": "zeta", "availability": "available", "verified_on": "2026-10-01", "capabilities": {"text": True}},
+                                                       {"provider": "openai", "id": "alpha", "availability": "available", "verified_on": "2026-10-01", "capabilities": {"text": True}}]})
+    assert pick_model(unpriced, "openai", {"zeta"}).id == "zeta"  # one the key can see beats alphabetical
+    assert pick_model(unpriced, "openai", None).id == "alpha" and pick_model(unpriced, "nothing", None) is None
+    r = run(Fake(models=("alpha",)), catalog=unpriced)
+    assert r.model == "openai/alpha" and r.status == "ok" and "no price in your catalog" in by(r)["model"].detail
+    assert [c.name for c in r.checks if c.status == "ok"] == ["key", "model", "errors", "generate", "stream"]
+    assert "$" not in by(r)["generate"].detail  # no invented cost
+    dep = Catalog.load(overrides={"add_models": [dict(_m("openai", "old", 1.0, 2.0), availability="deprecated")]})
+    assert pick_model(dep, "openai", None) is None  # retired models are never picked, priced or not
+    mixed = cat(_m("openai", "unpriced-twin", 0.0, 0.0))
+    assert pick_model(Catalog.load(overrides={"add_models": [_m("openai", "priced", 5.0, 5.0), {"provider": "openai", "id": "aaa", "availability": "available",
+                                                         "verified_on": "2026-10-01", "capabilities": {"text": True}}]}), "openai", None).id == "priced" and mixed
+
+
+def test_the_plan_line_says_so_when_a_model_has_no_price(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODELSPEND_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    (tmp_path / "overrides.json").write_text(json.dumps({"add_models": [{"provider": "openai", "id": "only-one", "availability": "available", "verified_on": "2026-10-01",
+                                                                       "capabilities": {"text": True}}]}))
+    out = CliRunner().invoke(app, ["verify", "openai", "--model", "openai/only-one"], input="n\n")
+    assert "not counting openai/only-one" in out.output and "no price in your catalog" in out.output
+
+
+def test_the_cost_bound_covers_every_call_the_checks_can_make_including_the_cache_retry():
+    m = CAT.get("openai/small")  # $0.10 in, $0.40 out per million
+    plain = (60 * 3 * 0.1 + 2 * 512 * 0.4) / 1e6  # key and errors cost nothing; generate and stream each at the full allowance
+    assert abs(plan_cost(m, cache=False) - plain) < 1e-12
+    with_cache = ((60 * 3 + 3 * 1600) * 0.1 + (2 + 3) * 512 * 0.4) / 1e6  # three long calls: first, repeat, and the repeat after a wait
+    assert abs(plan_cost(m, cache=True) - with_cache) < 1e-12

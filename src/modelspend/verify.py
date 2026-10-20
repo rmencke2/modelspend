@@ -63,11 +63,14 @@ def pick_model(catalog: Catalog, provider: str, visible: set[str] | None = None,
             return catalog.get(explicit)
         except KeyError:
             return None
-    pool = [m for m in catalog.models if m.provider == provider and m.availability not in ("deprecated", "unavailable")
-            and m.pricing and m.pricing.known and m.pricing.currency == "USD"]
-    seen = [m for m in pool if visible is not None and m.id in visible]
-    pool = seen or pool
-    return min(pool, key=lambda m: (m.pricing.input_per_mtok + m.pricing.output_per_mtok, m.ref), default=None)
+    live = [m for m in catalog.models if m.provider == provider and m.availability not in ("deprecated", "unavailable")]
+    pool = [m for m in live if m.pricing and m.pricing.known and m.pricing.currency == "USD"]
+    pool = [m for m in pool if visible is not None and m.id in visible] or pool
+    if pool:
+        return min(pool, key=lambda m: (m.pricing.input_per_mtok + m.pricing.output_per_mtok, m.ref))
+    # nothing is priced yet (a provider you just synced): checking the adapter needs a model, not a price, so use one the key can see
+    seen = [m for m in live if visible is not None and m.id in visible]
+    return min(seen or live, key=lambda m: m.ref, default=None)
 
 
 def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None = None) -> ProviderRequest:
@@ -87,12 +90,16 @@ def plan_cost(model: Model | None, cache: bool) -> float:
     """An upper bound on what the checks can cost: every call charged its full output allowance."""
     if not model or not model.pricing or not model.pricing.known:
         return 0.0
-    out_calls = 2 + (1 if model.capabilities.structured_output else 0) + (2 if cache else 0)
-    inp = 60 * 3 + (2 * 1600 if cache else 0)
+    out_calls = 2 + (1 if model.capabilities.structured_output else 0) + (3 if cache else 0)  # the cache check may repeat once after a wait
+    inp = 60 * 3 + (3 * 1600 if cache else 0)
     return (inp * model.pricing.input_per_mtok + out_calls * MAX_OUT * model.pricing.output_per_mtok) / 1_000_000
 
 
-async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog, *, model: str | None = None, cache: bool = False) -> ProviderReport:
+CACHE_RETRY_WAIT_S = 5.0  # some providers build their cache a few seconds after the first call (DeepSeek documents this)
+
+
+async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog, *, model: str | None = None, cache: bool = False,
+                          sleep: Any = asyncio.sleep) -> ProviderReport:
     rep = ProviderReport(name, None)
     add = lambda n, s, d: rep.checks.append(Check(n, s, d))  # noqa: E731
     visible: set[str] | None = None
@@ -108,6 +115,8 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         return rep
     rep.model = m.ref
     rep.est_cost = plan_cost(m, cache)
+    if not (m.pricing and m.pricing.known):
+        add("model", "ok", f"using {m.ref}: no price in your catalog, so no cost is shown (the checks do not need one)")
     if m.id not in visible and visible:
         add("model", "warn", f"{m.ref} is in your catalog but this key's model list does not include it")
     # 2. an unknown model must fail in a way the router understands
@@ -180,12 +189,18 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         try:
             a = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
             b = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
+            waited = False
             if b.cache_read_tokens <= 0:
-                add("cache", "skip", f"inconclusive: no cache hit was reported on the second call ({_total(b)} tokens). Not every provider caches automatically")
+                await sleep(CACHE_RETRY_WAIT_S)  # a cache that is built asynchronously is not there for an immediate repeat
+                b = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
+                waited = True
+            if b.cache_read_tokens <= 0:
+                add("cache", "skip", f"inconclusive: no cache hit was reported on the repeat, nor after a {CACHE_RETRY_WAIT_S:g} s wait ({_total(b)} tokens). Not every provider caches automatically")
             elif abs(_total(a) - _total(b)) > 0.05 * max(_total(a), 1):
                 add("cache", "fail", f"cached tokens are not counted once: first call {_total(a)} total, second {_total(b)} (= {b.input_tokens} + {b.cache_read_tokens} cached). Reconciliation and costs would be off")
             else:
-                add("cache", "ok", f"second call: {b.input_tokens} uncached + {b.cache_read_tokens} cached = {_total(b)}, first call {_total(a)}: counted once")
+                add("cache", "ok", f"repeat: {b.input_tokens} uncached + {b.cache_read_tokens} cached = {_total(b)}, first call {_total(a)}: counted once"
+                   + (f" (the cache was only there after a {CACHE_RETRY_WAIT_S:g} s wait)" if waited else ""))
         except Exception as e:  # noqa: BLE001
             add("cache", "fail", _err(e))
     return rep
