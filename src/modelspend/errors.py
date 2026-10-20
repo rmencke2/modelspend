@@ -78,6 +78,7 @@ class ProviderError(Exception):
         self.kind = kind
         self.message = message
         self.status_code = status_code
+        self.retry_after: float | None = None  # set by the classifier when the provider says how long to wait
 
     @property
     def retryable(self) -> bool:

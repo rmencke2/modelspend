@@ -270,3 +270,71 @@ def test_the_cost_bound_covers_every_call_the_checks_can_make_including_the_cach
     assert abs(plan_cost(m, cache=False) - plain) < 1e-12
     with_cache = ((60 * 3 + 3 * 1600) * 0.1 + (2 + 3) * 512 * 0.4) / 1e6  # three long calls: first, repeat, and the repeat after a wait
     assert abs(plan_cost(m, cache=True) - with_cache) < 1e-12
+
+
+# ---- free tiers: a few requests a minute ----
+from modelspend.verify import _retry_after  # noqa: E402
+
+
+class Limited(Fake):
+    """Rate limits the first `fail_first` attempts of each distinct call, saying how long to wait (as Gemini's free tier does)."""
+
+    def __init__(self, fail_first=1, always=False, **kw):
+        super().__init__(**kw)
+        self.fail_first, self.always, self.tries = fail_first, always, {}
+
+    def _gate(self, key):
+        self.tries[key] = self.tries.get(key, 0) + 1
+        if self.always or self.tries[key] <= self.fail_first:
+            raise ProviderError("openai", "rate_limit", "You exceeded your current quota. Please retry in 2.5s.", 429)
+
+    async def list_models(self):
+        self._gate("list")
+        return await super().list_models()
+
+    async def generate(self, req):
+        self._gate("probe" if req.model == "modelspend-verify-no-such-model" else ("long" if len(req.messages[0].content) > 1000 else ("schema" if req.response_schema else "gen")))
+        return await super().generate(req)
+
+    async def stream(self, req):
+        self._gate("stream")
+        async for x in super().stream(req):
+            yield x
+
+
+def test_a_rate_limited_provider_is_waited_for_once_per_call_using_its_own_hint():
+    r = run(Limited(fail_first=1), cache=True)
+    assert r.status == "ok", to_table([r])
+    assert set(WAITS) <= {3.5, 5.0}  # 2.5 s from the provider's message + 1 s of margin; the 5.0 is the separate wait for a late cache
+    assert WAITS.count(3.5) == 5  # list, probe, generate, stream and the long call each hit the limit once, and each was waited for once
+
+
+def test_a_provider_that_stays_rate_limited_is_blocked_not_failed_and_is_only_retried_once():
+    r = run(Limited(always=True))
+    assert r.status == "skip" and by(r)["key"].status == "skip" and "rate limited" in by(r)["key"].detail and WAITS == [3.5]
+    assert [c.name for c in r.checks] == ["key"]  # nothing else can run, and nothing was spammed at a limited key
+
+
+def test_a_bad_key_is_a_failure_but_an_empty_or_limited_key_listing_is_only_blocked():
+    class BadKey(Fake):
+        async def list_models(self):
+            raise ProviderError("openai", "auth", "API key not valid", 400)
+    r = run(BadKey())
+    assert r.status == "fail" and by(r)["key"].status == "fail"
+    class Empty(Fake):
+        async def list_models(self):
+            raise ProviderError("openai", "quota", "Insufficient Balance", 402)
+    assert run(Empty()).status == "skip"
+
+
+def test_retry_after_reads_the_providers_hint_and_clamps_it():
+    assert _retry_after(ProviderError("g", "rate_limit", "Please retry in 22.5s.")) == 23.5
+    assert _retry_after(ProviderError("g", "rate_limit", "retry after 3s")) == 4.0
+    assert _retry_after(ProviderError("g", "rate_limit", "Please retry in 900s")) == 65.0  # never an unbounded wait
+    assert _retry_after(ProviderError("g", "rate_limit", "slow down")) == 20.0 and _retry_after(ProviderError("g", "rate_limit", "retry in 0s")) == 1.0
+
+
+def test_the_wait_prefers_the_classifiers_retry_after_over_scanning_the_message():
+    e = ProviderError("g", "rate_limit", "something unrelated")
+    e.retry_after = 7.0
+    assert _retry_after(e) == 8.0

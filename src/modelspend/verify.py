@@ -79,6 +79,8 @@ def _req(model: Model, text: str, *, max_out: int = MAX_OUT, schema: dict | None
                            reasoning_in_output=model.pricing.reasoning_in_output if model.pricing else True)
 
 
+import re
+
 BLOCKING = ("quota", "rate_limit")  # the provider refused for account reasons: nothing is learned about the adapter either way
 
 
@@ -87,6 +89,26 @@ def _err(e: BaseException) -> str:
     hint = {"quota": " (the account is out of credit or at a spending limit: that is for you to fix, not an adapter problem)",
             "rate_limit": " (rate limited: wait a minute and run it again)"}.get(kind, "")
     return f"{kind}: {str(getattr(e, 'message', e))[:100]}{hint}"
+
+
+def _retry_after(e: BaseException) -> float:
+    """How long a rate-limited provider asked us to wait (its own 'retry in 22.5s'), clamped; 20 s when it does not say."""
+    secs = getattr(e, "retry_after", None)
+    if secs is None:
+        m = re.search(r"retry (?:in|after)\s*([0-9]+(?:\.[0-9]+)?)\s*s", str(getattr(e, "message", e)), re.I)
+        secs = float(m.group(1)) if m else None
+    return 20.0 if secs is None else min(65.0, max(1.0, secs + 1.0))
+
+
+async def _retrying(op: Any, sleep: Any) -> Any:
+    """Run `op()`; if the provider rate-limits it, wait as long as it asks (once) and run it again. Free tiers allow only a handful of requests a minute."""
+    try:
+        return await op()
+    except ProviderError as e:
+        if e.kind != "rate_limit":
+            raise
+        await sleep(_retry_after(e))
+        return await op()
 
 
 def _fail(e: BaseException) -> tuple[str, str]:
@@ -118,10 +140,10 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     add = lambda n, s, d: rep.checks.append(Check(n, s, d))  # noqa: E731
     visible: set[str] | None = None
     try:
-        visible = set(await adapter.list_models())
+        visible = set(await _retrying(adapter.list_models, sleep))
         add("key", "ok", f"{len(visible)} models visible to this key")
     except Exception as e:  # noqa: BLE001
-        add("key", "fail", _err(e))
+        add("key", *_fail(e))
         return rep  # nothing else can work without a key
     m = pick_model(catalog, name, visible, model)
     if m is None:
@@ -135,7 +157,8 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         add("model", "warn", f"{m.ref} is in your catalog but this key's model list does not include it")
     # 2. an unknown model must fail in a way the router understands
     try:
-        await adapter.generate(ProviderRequest(model="modelspend-verify-no-such-model", messages=[Message(role="user", content="hi")], max_output_tokens=8, timeout_s=30.0))
+        probe = ProviderRequest(model="modelspend-verify-no-such-model", messages=[Message(role="user", content="hi")], max_output_tokens=8, timeout_s=30.0)
+        await _retrying(lambda: adapter.generate(probe), sleep)
         add("errors", "fail", "an unknown model name was accepted: the provider (or its adapter) may be routing it somewhere else")
     except ProviderError as e:
         if e.kind in ("quota", "auth", "rate_limit"):  # refused before the model was even looked at: this says nothing about how model errors are classified
@@ -150,7 +173,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     gen_usage: Usage | None = None
     try:
         t0 = time.monotonic()
-        r = await adapter.generate(_req(m, PROMPT))
+        r = await _retrying(lambda: adapter.generate(_req(m, PROMPT)), sleep)
         ms = int((time.monotonic() - t0) * 1000)
         u = r.usage
         gen_usage = u
@@ -174,12 +197,15 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
         add("generate", *_fail(e))
     # 4. stream
     try:
-        text, end = "", None
-        async for ch in adapter.stream(_req(m, PROMPT)):
-            if isinstance(ch, StreamEnd):
-                end = ch.response
-            else:
-                text += ch.text
+        async def consume() -> tuple[str, Any]:
+            got, last = "", None
+            async for ch in adapter.stream(_req(m, PROMPT)):
+                if isinstance(ch, StreamEnd):
+                    last = ch.response
+                else:
+                    got += ch.text
+            return got, last
+        text, end = await _retrying(consume, sleep)
         if end is None:
             add("stream", "fail", "the stream ended without a final response")
         elif end.usage.output_tokens <= 0 and _total(end.usage) <= 0:
@@ -193,7 +219,7 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     # 5. structured output, only where the catalog claims it
     if m.capabilities.structured_output:
         try:
-            r = await adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA))
+            r = await _retrying(lambda: adapter.generate(_req(m, PROMPT + ". Put it in the 'answer' field.", schema=SCHEMA)), sleep)
             try:
                 ok = json.loads(r.text).get("answer") == "pong"
             except (ValueError, AttributeError):
@@ -206,12 +232,13 @@ async def verify_provider(name: str, adapter: ProviderAdapter, catalog: Catalog,
     # 6. cached-token accounting (opt in: ~3,000 input tokens)
     if cache:
         try:
-            a = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
-            b = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
+            long_call = lambda: adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))  # noqa: E731
+            a = (await _retrying(long_call, sleep)).usage
+            b = (await _retrying(long_call, sleep)).usage
             waited = False
             if b.cache_read_tokens <= 0:
                 await sleep(CACHE_RETRY_WAIT_S)  # a cache that is built asynchronously is not there for an immediate repeat
-                b = (await adapter.generate(_req(m, FILLER + "\n" + PROMPT, max_out=MAX_OUT))).usage
+                b = (await _retrying(long_call, sleep)).usage
                 waited = True
             if b.cache_read_tokens <= 0:
                 add("cache", "skip", f"inconclusive: no cache hit was reported on the repeat, nor after a {CACHE_RETRY_WAIT_S:g} s wait ({_total(b)} tokens). Not every provider caches automatically")

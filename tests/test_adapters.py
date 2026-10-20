@@ -292,3 +292,26 @@ async def test_google_rejects_tools_plus_schema_and_counts_tokens():
     with pytest.raises(InvalidRequest):
         await a.generate(preq(tools=[ToolSpec(name="f")], response_schema={"type": "object"}))
     assert await a.count_tokens(preq()) == 12
+
+
+def test_google_style_errors_are_classified_by_what_they_mean_not_by_their_status():
+    """Found rehearsing Gemini with the real SDK (2026-10-20): a bad key is HTTP 400, and a per-minute limit uses the 'exceeded your current quota' wording."""
+    bad_key = type("ClientError", (Exception,), {"code": 400})("400 INVALID_ARGUMENT. {'error': {'message': 'API key not valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT'}}")
+    k = classify_exception("google", bad_key)
+    assert k.kind == "auth" and k.kind in ProviderError.FAILOVER  # so a broken Google key fails over instead of failing the request
+    assert classify_exception("google", type("E", (Exception,), {"code": 400})("API key expired. Please renew the API key.")).kind == "auth"
+    free_tier = type("ClientError", (Exception,), {"code": 429})("429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check your plan and billing details. Please retry in 22.5s.")
+    rl = classify_exception("google", free_tier)
+    assert rl.kind == "rate_limit" and rl.retryable  # a limit that says when to try again is not an empty account
+    daily = type("ClientError", (Exception,), {"code": 429})("429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check your plan and billing details.")
+    assert classify_exception("google", daily).kind == "quota"  # no retry hint: still treated as no credit
+    assert classify_exception("openai", type("E", (Exception,), {"status_code": 429})("insufficient_quota: you exceeded your current quota")).kind == "quota"
+
+
+def test_the_retry_hint_survives_a_long_message_because_the_classifier_reads_the_whole_of_it():
+    """Found by the second Gemini rehearsal: the hint sits after ~400 characters of explanation and used to be cut off, so a rate limit read as no credit."""
+    long = "429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check your plan and billing details. " + "More detail about quotas and limits. " * 12 + "Please retry in 22.5s."
+    assert len(long) > 450
+    e = classify_exception("google", type("ClientError", (Exception,), {"code": 429})(long))
+    assert e.kind == "rate_limit" and e.retry_after == 22.5 and len(e.message) < 400
+    assert classify_exception("google", type("ClientError", (Exception,), {"code": 429})("429 RESOURCE_EXHAUSTED. You exceeded your current quota.")).retry_after is None

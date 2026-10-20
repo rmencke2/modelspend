@@ -104,6 +104,19 @@ modelspend verify deepseek --cache --report deepseek-check.md
 
 `verify` needs no price. Afterwards, to price DeepSeek's models, copy the numbers from DeepSeek's own pricing page (`modelspend sources check deepseek` shows the link and whether it changed) into `modelspend catalog price deepseek/<model> --input <usd/M> --output <usd/M> --cached <usd/M>`. A FAIL or WARN in the report is the finding: paste it into an issue.
 
+## Verifying Gemini (needs your own key)
+
+The Gemini adapter uses Google's own SDK, so it has never been confirmed against the live API: it is tested against SDK-shaped fakes, and (2026-10-20) rehearsed with the real SDK against a local fake that copies Gemini's documented behaviour, which found and fixed the bugs in the changelog. That proves the procedure, not Gemini. A free key from Google AI Studio is enough (the free tier allows only a few requests a minute, and `verify` waits and retries when it is told to):
+
+```
+modelspend keys set google         # paste the key when asked; it is not echoed
+modelspend keys test google
+modelspend catalog sync --provider google --add-new --only flash --write
+modelspend verify google --cache --report gemini-check.md
+```
+
+`verify` needs no price. If it picks a model you do not want (an image or audio variant), name one: `modelspend verify google --model google/<model>`. Paste the report, FAILs and WARNs included.
+
 ## Taking models back out
 
 `modelspend catalog remove 'openrouter/*:batch'` shows what it would remove; add `--yes` to do it. It only removes models you added (never shipped ones; for those use `modelspend models disable <ref>`), keeps the previous file as `overrides.json.bak`, and names any alias that pointed at a removed model. Quote patterns so your shell does not expand the `*`.

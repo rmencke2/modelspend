@@ -330,9 +330,18 @@ def test_sync_exact_and_snapshot_filtering(monkeypatch):
 def test_sync_says_which_added_models_still_need_limits_and_a_tier(monkeypatch):
     _fake_listing(monkeypatch, "openai", {"gpt-test-1": {}, "gpt-test-2": {"context_tokens": 128000, "max_output_tokens": 4096, "line": "haiku"}})
     r = runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--only", "gpt-test", "--write"])
-    assert r.exit_code == 0 and "stay unroutable until you set them" in r.output
+    assert r.exit_code == 0 and "stay unroutable until you set it" in r.output
     assert "modelspend catalog set openai/gpt-test-1 tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>" in r.output
     assert "catalog set openai/gpt-test-2" not in r.output  # that one arrived with limits and a suggested tier
+
+
+def test_sync_asks_only_for_what_is_missing(monkeypatch):
+    """Found rehearsing Gemini: its listing carries the limits, so only a tier is missing; the hint used to ask for all three."""
+    _fake_listing(monkeypatch, "openai", {"gpt-test-3": {"context_tokens": 128000, "max_output_tokens": 4096}, "gpt-test-4": {"context_tokens": 128000, "line": "haiku"}})
+    r = runner.invoke(app, ["catalog", "sync", "--provider", "openai", "--add-new", "--only", "gpt-test", "--write"])
+    assert "modelspend catalog set openai/gpt-test-3 tier=1\n" in r.output  # limits known: only the tier is asked for
+    assert "limits.context_tokens" not in r.output.split("openai/gpt-test-3")[1].split("\n")[0]
+    assert "modelspend catalog set openai/gpt-test-4 limits.max_output_tokens=<n>" in r.output and "gpt-test-4 tier" not in r.output.replace("gpt-test-4 ctx", "")  # tier suggested from the line, output limit missing
 
 
 def test_the_refusal_for_unknown_limits_names_the_command_that_fixes_it(catalog, cfg):

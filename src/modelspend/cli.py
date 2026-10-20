@@ -1021,7 +1021,7 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
         raise typer.Exit(2)
     today = str(date.today())
     ov = _load_overrides(cfg)
-    incomplete: list[str] = []  # models whose limits or tier the API could not tell us: they stay unroutable until the user sets them
+    incomplete: dict[str, list[str]] = {}  # model -> what the API could not tell us (limits, tier): it stays unroutable until the user sets them
 
     async def go():
         n = 0
@@ -1046,9 +1046,12 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
                     continue
                 n += 1
                 have = cat.get(ref).limits if known else None
-                if not ((patch.get("limits", {}).get("context_tokens") or (have and have.context_tokens))
-                        and (patch.get("limits", {}).get("max_output_tokens") or (have and have.max_output_tokens))) or not (patch.get("tier") or has_tier):
-                    incomplete.append(ref)
+                missing = [f"{k}=<n>" for k, name_ in (("limits.context_tokens", "context_tokens"), ("limits.max_output_tokens", "max_output_tokens"))
+                           if not (patch.get("limits", {}).get(name_) or (have and getattr(have, name_)))]
+                if not (patch.get("tier") or has_tier):
+                    missing.insert(0, "tier=1")
+                if missing:
+                    incomplete[ref] = missing
                 lim = patch.get("limits", {})
                 typer.echo(f"{'update' if known else 'add   '} {ref:<44} ctx {lim.get('context_tokens', '?')} out {lim.get('max_output_tokens', '?')} "
                            f"tier {patch.get('tier', 'kept' if has_tier else '?')} {patch['availability']}")
@@ -1065,8 +1068,9 @@ def catalog_sync(provider: Optional[str] = typer.Option(None, help="Only this pr
         return n
     n = asyncio.run(go())
     if incomplete:
-        typer.echo("\nThe API does not say these models' context length, output limit or tier, so they stay unroutable until you set them from the provider's docs:\n  "
-                   + "\n  ".join(f"modelspend catalog set {r} tier=1 limits.context_tokens=<n> limits.max_output_tokens=<n>" for r in incomplete[:5])
+        shown = list(incomplete.items())[:5]
+        typer.echo("\nThe API does not say everything these models need (a context length, an output limit or a tier), so they stay unroutable until you set it from the provider's docs:\n  "
+                   + "\n  ".join(f"modelspend catalog set {r} {' '.join(m)}" for r, m in shown)
                    + ("\n  ..." if len(incomplete) > 5 else "") + "\n(tier is your own prior: 1 small and cheap, 3 strongest)")
     if write and n:
         _save_overrides(cfg, ov)

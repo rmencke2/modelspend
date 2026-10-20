@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
@@ -70,6 +71,11 @@ _QUOTA_MARKERS = ("insufficient_quota", "credit_balance", "credit balance", "exc
                   "insufficient balance", "insufficient_balance")  # the last two: DeepSeek answers HTTP 402 "Insufficient Balance" when the account has no credit
 
 
+_RETRY_HINT = re.compile(r"retry (?:in|after)\s*([0-9]+(?:\.[0-9]+)?)\s*s", re.I)
+_AUTH_MARKERS = ("api key not valid", "api_key_invalid", "api key expired", "api_key_expired")
+_TEMPORARY_MARKERS = ("please retry in", "retry in ", "retry after")  # a quota message that says when to try again is a rate limit, not an empty account
+
+
 def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     """Map SDK exceptions onto normalized kinds without importing the SDKs here."""
     if isinstance(exc, ProviderError):
@@ -78,11 +84,14 @@ def classify_exception(provider: str, exc: BaseException) -> ProviderError:
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     status = status if isinstance(status, int) else None
     from ..redact import scrub
-    msg = scrub(str(exc))[:300]  # scrub BEFORE truncating, so a cut can never leave half a key behind
+    full = scrub(str(exc))  # scrub BEFORE truncating, so a cut can never leave half a key behind
+    msg = full[:300]
     low = name.lower()
-    text = msg.lower()
-    if any(m in text for m in _QUOTA_MARKERS) or status == 402:  # 402 Payment Required: no credit, so another provider may succeed but retrying this one cannot
-        kind = "quota"
+    text = full.lower()  # classify on the whole message: Google puts "Please retry in 22.5s" after a long explanation, past any cut
+    if any(m in text for m in _AUTH_MARKERS):
+        kind = "auth"  # Google answers a bad key with HTTP 400 INVALID_ARGUMENT, not 401
+    elif any(m in text for m in _QUOTA_MARKERS) or status == 402:  # 402 Payment Required: no credit, so another provider may succeed but retrying this one cannot
+        kind = "rate_limit" if any(m in text for m in _TEMPORARY_MARKERS) else "quota"  # Gemini's free tier uses the quota wording for per-minute limits, with a retry hint
     elif "timeout" in low or "timedout" in low:
         kind = "timeout"
     elif "connection" in low or "connect" in low:
@@ -99,7 +108,10 @@ def classify_exception(provider: str, exc: BaseException) -> ProviderError:
         kind = "bad_request"
     else:
         kind = "unknown"
-    return ProviderError(provider, kind, f"{name}: {msg}", status)
+    err = ProviderError(provider, kind, f"{name}: {msg}", status)
+    hint = _RETRY_HINT.search(full)
+    err.retry_after = float(hint.group(1)) if hint else None  # how long the provider asked us to wait, when it said
+    return err
 
 
 def is_strict_schema(schema: dict[str, Any]) -> bool:
