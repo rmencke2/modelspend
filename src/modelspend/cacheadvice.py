@@ -45,7 +45,7 @@ def _events(store: Store, since: float | None, project: str | None):
     if project:
         where.append("r.project = ?")
         params.append(project.lower())
-    q = ("select p.request_id rid, r.ts ts, p.provider provider, p.model model, p.level level, p.h h, p.hn hn, p.tokens tokens, coalesce(r.cache_read_tokens, 0) cached, case when r.input_tokens is null then 0 else r.input_tokens + coalesce(r.cache_read_tokens, 0) end total "
+    q = ("select p.request_id rid, r.ts ts, p.provider provider, p.model model, p.level level, p.h h, p.hn hn, p.tokens tokens, coalesce(r.cache_read_tokens, 0) cached, coalesce(r.input_tokens, 0) total "
          f"from prefix_stats p join requests r on r.id = p.request_id where {' and '.join(where)} order by r.ts, p.request_id")
     return store.db.execute(q, params)
 
@@ -55,7 +55,7 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
     by_req: dict[str, dict[str, Any]] = {}
     for r in _events(store, since, project):
         x = by_req.setdefault(r["rid"], {"ts": r["ts"], "provider": r["provider"], "model": r["model"], "cached": r["cached"], "levels": []})
-        # our estimate can overshoot (6,200 against 5,100 real on the first live run): the provider's own count of this request's input is the ceiling
+        # our estimate can overshoot (6,200 against 5,100 real on the first live run): the provider's own count of this request's input (requests.input_tokens already includes the cached part) is the ceiling
         x["levels"].append((r["level"], r["h"], min(r["tokens"], r["total"]) if r["total"] else r["tokens"], r["hn"]))
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
     seen: dict[tuple[str, str, str], float] = {}  # (provider, model, prefix hash) -> last time it was sent
