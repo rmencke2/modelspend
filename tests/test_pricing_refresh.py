@@ -302,3 +302,10 @@ async def test_a_page_with_rows_matching_no_catalog_model_is_not_accepted_as_unc
     assert "anthropic" not in load_snapshots(rig.cfg)  # no baseline: otherwise the next run says 'unchanged' and the rows are never shown again
     again = await rig.refresh()
     assert again["state"] == "no_changes" and again["unmatched"] == 1 and len(rig.ad.calls) == 2
+
+
+async def test_a_page_that_yields_no_rows_is_an_error_and_is_not_accepted_as_a_baseline(rig):
+    rig.extraction = {"models": []}
+    r = await rig.refresh()
+    assert r["state"] == "error" and "pricing paste anthropic" in r["detail"] and "characters of page text" in r["detail"]
+    assert "anthropic" not in load_snapshots(rig.cfg)

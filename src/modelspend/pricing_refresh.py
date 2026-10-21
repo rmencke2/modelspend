@@ -278,6 +278,10 @@ async def refresh_provider(
     except Exception as e:  # noqa: BLE001
         return {"provider": provider, "state": "error", "detail": f"extraction failed: {getattr(e, 'message', str(e))[:1200]}"}  # the router's reason also says how to fix it: never cut it off
 
+    if not entries:  # a page with prices always yields rows: none means the table is not in the text we were given (JavaScript-rendered, or the wrong page)
+        return {"provider": provider, "extractor": meta, "state": "error", "detail": f"the extractor found no price rows in {len(text):,} characters of page text from {src.pricing_url}; "
+                f"the prices are probably drawn by JavaScript or this is not the pricing page. Copy the price table from the page in your browser and run `modelspend pricing paste {provider}`"}
+
     catalog = engine.catalog
     changes, unchanged, unmatched, ambiguous, unverified = [], [], [], [], []
     seen: dict[str, int] = {}
