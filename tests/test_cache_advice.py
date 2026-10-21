@@ -428,3 +428,12 @@ def test_the_live_check_script_shows_working_then_drifting(monkeypatch, cfg):
     assert "caching is working" in out and "only in numbers, dates or ids" in out
     rows = build_cache_advice(ms.store, catalog, cfg, project=ex.PROJECT)["rows"]
     assert sorted((r["drifting"], r["requests"], r["cached_tokens"] > 0) for r in rows) == [(False, 12, True), (True, 8, False)]
+
+
+def test_a_token_estimate_above_what_the_provider_counted_is_capped(catalog=None):
+    s = Store(":memory:")
+    seed(s, 12, 2, system=("S", 6200), cached=[0] + [4992] * 11)  # estimate 6,200; the provider counted 5,115 input tokens in all
+    s.db.execute("update requests set input_tokens = 5115 - cache_read_tokens")
+    r = advise(s)["rows"][0]
+    assert r["prefix_tokens"] == 5115 and r["repeat_tokens"] == 11 * 5115 and r["missed_tokens"] == 11 * 5115 - 11 * 4992
+    assert r["advice"].startswith("caching is working")  # 2% missed, not the 24% the estimate alone would show
