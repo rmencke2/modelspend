@@ -16,14 +16,19 @@ The dashboard's Savings tab has the same table under **Prompt caching**; `GET /v
 One row per long prompt start that was sent more than once: its size, how many repeats fell inside the window, how many **cached tokens the provider actually reported**, how many it **missed**, what caching has already saved you, what is still on the table, and what to do:
 
 - *caching is working*: the provider reported cache hits for (almost) every repeat;
-- *should cache automatically but reported 0 cached tokens*: the start of the prompt probably changes between calls (a timestamp, a request id, items in a different order). Put fixed text first and variable text last;
+- *differs between calls only in numbers, dates or ids* (marked "drifting" in JSON): the start of the prompt changes from call to call in a timestamp, request id or counter, so a provider can never cache it. Put fixed text first and variable text last. ModelSpend recognises this by a second keyed hash of the same prefix with its numbers, dates and ids blanked: two different prefixes with one such hash are the same text apart from those. It cannot see a change in the words themselves, or in the order of items, which look like unrelated prompts;
+- *the same prompt start was sent again but no cached tokens were reported*: the text did not change, so the usual causes are a prompt below the model's minimum cacheable size (our token count is an estimate, and some models need more than 1,024), a model that does not cache, or a cache that expired. `modelspend verify <provider> --cache` tests the provider on your key;
 - *needs cache markers*: Anthropic caches only where the request marks what to cache (`cache_control`). **ModelSpend does not send those markers yet**, so for Claude the row is information, not something ModelSpend can fix for you;
 - *repeats are more than N minutes apart*: a cache would have expired between them;
 - *unknown provider*: ModelSpend does not assume a provider caches. `modelspend verify <provider> --cache` tests it on your key.
 
+## Check it on your own key
+
+`python examples/caching_live_check.py` sends 12 requests with one fixed system prompt, then 8 whose system prompt starts with the current time, to `openai/gpt-4.1-nano` (well under a cent), and prints the table: the first group should read *caching is working*, the second *differs between calls only in numbers, dates or ids*. Dollar figures need a cached-input price for the model in your catalog.
+
 ## What is stored (and what is not)
 
-Per request, for each reusable prefix of at least 1,024 estimated tokens, ModelSpend keeps a **keyed hash** (HMAC-SHA256 with a random key that lives only in your own database, shortened) and a **token estimate**. The text is never stored, and a hash from your database matches nothing anywhere else. Short prompts are skipped before anything is even tokenized. This is the same technique the classification cache already uses.
+Per request, for each reusable prefix of at least 1,024 estimated tokens, ModelSpend keeps a **keyed hash** (HMAC-SHA256 with a random key that lives only in your own database, shortened) and a **token estimate**, plus a second keyed hash of the same prefix with numbers, dates and ids blanked (that is how a changing timestamp is recognised). The text is never stored, and a hash from your database matches nothing anywhere else. Short prompts are skipped before anything is even tokenized. This is the same technique the classification cache already uses.
 
 Turn it off with `"track_prefixes": false` in `settings.json` (or `MODELSPEND_TRACK_PREFIXES=0`); `modelspend caching --forget` erases what is stored, and `modelspend prune` removes old rows with the requests they belong to. A failure in tracking can never affect a request.
 

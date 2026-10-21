@@ -160,7 +160,8 @@ def test_repeats_inside_the_window_that_were_never_cached_are_counted_and_priced
     r = advise(s)["rows"][0]
     assert (r["requests"], r["repeats"], r["repeat_tokens"], r["cached_tokens"], r["missed_tokens"]) == (5, 4, 8000, 0, 8000)
     assert abs(r["potential_saving_usd"] - 8000 * (2.0 - 0.25) / 1e6) < 1e-12 and r["realized_saving_usd"] == 0
-    assert "should cache automatically" in r["advice"] and r["kind"] == "automatic"
+    assert "no cached tokens were reported" in r["advice"] and r["kind"] == "automatic" and not r["drifting"]
+    assert "changes between calls" not in r["advice"]  # the text was identical: blaming the prompt would be wrong
 
 
 def test_cached_tokens_the_provider_reported_are_realized_savings_and_close_the_gap():
@@ -291,3 +292,139 @@ def test_when_nothing_is_priced_the_table_says_no_dollar_figure_instead_of_zero(
     t = to_table(rep)
     assert rep["totals"]["priced_rows"] == 0 and "No dollar figure" in t and "Saved so far" not in t
     assert "Saved so far" in to_table(advise(s))
+
+
+# ---------------------------------------------------------------- a prefix that drifts in numbers or ids
+def seed_drift(store, n, gap, *, hn="n" * 16, cached=0, level="system", tokens=2000, with_hn=True, start=None, tag="d", provider="openai"):
+    t0 = start if start is not None else time.time() - n * gap - 10
+    for i in range(n):
+        rid = f"{tag}{i}"
+        store.db.execute("insert into requests(id, ts, provider, model, status, cache_read_tokens) values (?,?,?,?,?,?)",
+                         (rid, t0 + i * gap, provider, "gpt-x", "ok", cached if isinstance(cached, int) else cached[i]))
+        store.db.execute("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens, hn) values (?,?,?,?,?,?,?,?)",
+                         (rid, t0 + i * gap, provider, "gpt-x", level, f"{i:016x}", tokens, hn if with_hn else None))
+    store.db.commit()
+
+
+def test_a_timestamp_near_the_top_changes_the_hash_but_not_the_shape():
+    a = prefix_levels(msgs(system="Current time: 2026-10-21T10:01:00Z\n" + LONG), None, None, SALT)[0]
+    b = prefix_levels(msgs(system="Current time: 2026-10-21T10:02:00Z\n" + LONG), None, None, SALT)[0]
+    assert a["h"] != b["h"] and a["hn"] == b["hn"]
+    for volatile in ("request 7f3a9c1e22b4", "id 123e4567-e89b-12d3-a456-426614174000", "Tuesday, 3 March", "counter=42"):
+        x = prefix_levels(msgs(system=volatile + " " + LONG), None, None, SALT)[0]
+        y = prefix_levels(msgs(system=volatile.replace("7f3a9c1e22b4", "0123456789ab").replace("42", "43").replace("Tuesday", "Friday").replace("3 March", "9 July")
+                               .replace("123e4567", "223e4567") + " " + LONG), None, None, SALT)[0]
+        assert x["h"] != y["h"] and x["hn"] == y["hn"], volatile
+
+
+def test_a_change_in_the_words_changes_the_shape_too():
+    a = prefix_levels(msgs(system="Be formal. " + LONG), None, None, SALT)[0]
+    b = prefix_levels(msgs(system="Be casual. " + LONG), None, None, SALT)[0]
+    assert a["hn"] != b["hn"]
+    assert prefix_levels(msgs(), None, None, b"t" * 32)[0]["hn"] != prefix_levels(msgs(), None, None, SALT)[0]["hn"]  # keyed like the exact hash
+
+
+def test_a_drifting_prefix_is_reported_and_priced():
+    s = Store(":memory:")
+    seed_drift(s, 5, 60)  # every call has a different exact prefix, all with one shape, a minute apart
+    rep = advise(s)
+    assert rep["rows"] and len(rep["rows"]) == 1
+    r = rep["rows"][0]
+    assert r["drifting"] and (r["requests"], r["repeats"], r["repeat_tokens"], r["cached_tokens"], r["missed_tokens"]) == (5, 4, 8000, 0, 8000)
+    assert abs(r["potential_saving_usd"] - 8000 * (2.0 - 0.25) / 1e6) < 1e-12 and r["realized_saving_usd"] == 0
+    assert "only in numbers, dates or ids" in r["advice"] and "after the fixed text" in r["advice"]
+    assert "numbers, dates or ids" in to_table(rep)
+
+
+def test_drift_is_not_reported_when_calls_are_further_apart_than_the_window():
+    s = Store(":memory:")
+    seed_drift(s, 4, 900)
+    assert advise(s)["rows"] == []  # a cache would have expired between calls anyway
+    assert advise(s, window_s=3600.0)["rows"][0]["drifting"]
+
+
+def test_rows_recorded_before_the_shape_hash_existed_report_no_drift():
+    s = Store(":memory:")
+    seed_drift(s, 5, 60, with_hn=False)
+    assert advise(s)["rows"] == []
+
+
+def test_an_exact_repeat_is_not_also_called_drift():
+    s = Store(":memory:")
+    seed(s, 5, 60)
+    s.db.execute("update prefix_stats set hn = 'z'")
+    rows = advise(s)["rows"]
+    assert len(rows) == 1 and not rows[0]["drifting"]
+
+
+def test_drift_counts_the_cached_tokens_the_provider_did_report():
+    s = Store(":memory:")
+    seed_drift(s, 4, 60, cached=[0, 500, 500, 500])
+    r = advise(s)["rows"][0]
+    assert r["cached_tokens"] == 1500 and r["missed_tokens"] == 4500
+
+
+def test_the_longest_drifting_level_gets_the_credit_not_both():
+    s = Store(":memory:")
+    seed_drift(s, 4, 60, level="system", tokens=1500, tag="a")
+    for i in range(4):  # same four requests also carry a longer context prefix with its own shape
+        s.db.execute("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens, hn) select id, ts, provider, 'gpt-x', 'context', ?, 3000, ? from requests where id = ?",
+                     (f"{i + 100:016x}", "c" * 16, f"a{i}"))
+    s.db.commit()
+    rows = advise(s)["rows"]
+    assert [(r["level"], r["repeat_tokens"]) for r in rows if r["drifting"]] == [("context", 9000)]
+
+
+def test_an_old_database_gets_the_shape_column(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.execute("create table prefix_stats(request_id text, ts real, provider text, model text, level text, h text, tokens int)")
+    db.execute("insert into prefix_stats values ('r', 1.0, 'openai', 'm', 'system', 'abc', 2000)")
+    db.commit()
+    db.close()
+    st = Store(path)
+    assert "hn" in {r[1] for r in st.db.execute("pragma table_info(prefix_stats)")}
+    assert st.db.execute("select hn from prefix_stats").fetchone()[0] is None
+    Store(path)  # opening again must not fail on the existing column
+
+
+def test_a_timestamp_first_system_prompt_is_found_end_to_end(catalog, cfg, store):
+    eng, _ = make_engine(catalog, cfg, {"openai": "ok"}, store=store)
+    for i in range(5):
+        asyncio.run(eng.run(RouteRequest(messages=[{"role": "system", "content": f"Current time: 2026-10-21T10:0{i}:00Z\n" + LONG}, {"role": "user", "content": "hi"}], providers=["openai"])))
+    assert len({r[0] for r in store.db.execute("select h from prefix_stats")}) == 5 and len({r[0] for r in store.db.execute("select hn from prefix_stats")}) == 1
+    rep = advise(store, catalog)
+    assert [(r["drifting"], r["requests"]) for r in rep["rows"]] == [(True, 5)]
+    assert "Current time" not in json.dumps([dict(r) for r in store.db.execute("select * from prefix_stats")])
+
+
+# ---------------------------------------------------------------- the live-check script, against a fake provider that caches like OpenAI
+def test_the_live_check_script_shows_working_then_drifting(monkeypatch, cfg):
+    import importlib.util
+    import pathlib
+    from modelspend import ModelSpend
+    from modelspend.providers.mock import ScriptedAdapter
+    from modelspend.providers.base import ProviderResponse
+    from modelspend.types import Usage
+
+    spec = importlib.util.spec_from_file_location("caching_live_check", pathlib.Path(__file__).parent.parent / "examples" / "caching_live_check.py")
+    ex = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ex)
+    monkeypatch.setattr(ex.time, "sleep", lambda s: None)
+    last: list[str] = []
+
+    def script(req, n):  # like OpenAI: the system prompt is served from cache when this call starts with exactly what the previous call started with
+        sysmsg = req.messages[0].content
+        total = sum(len(m.content or "") for m in req.messages) // 4
+        cached = len(sysmsg) // 4 if last and last[-1] == sysmsg and len(sysmsg) // 4 >= 1024 else 0
+        last.append(sysmsg)
+        return ProviderResponse(text="ok", usage=Usage(input_tokens=total - cached, cache_read_tokens=cached, output_tokens=1))
+
+    catalog = Catalog.load(overrides={"add_models": [_m("openai", "gpt-4.1-nano", 0.10, 0.40, cached=0.025)]})
+    cfg.track_prefixes = True
+    ms = ModelSpend(providers=["openai"], config=cfg, catalog=catalog, adapters={"openai": ScriptedAdapter("openai", script)}, store=Store(":memory:"))
+    out = ex.run(ms, pause_s=0)
+    assert "caching is working" in out and "only in numbers, dates or ids" in out
+    rows = build_cache_advice(ms.store, catalog, cfg, project=ex.PROJECT)["rows"]
+    assert sorted((r["drifting"], r["requests"], r["cached_tokens"] > 0) for r in rows) == [(False, 12, True), (True, 8, False)]

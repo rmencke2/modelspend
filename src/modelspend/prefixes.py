@@ -3,7 +3,7 @@
 Provider prompt caching bills a repeated prompt start (a system prompt, few-shot examples, a document) at a fraction of the normal input price, but only
 when the start is byte-identical and long enough. To tell you where that is being missed, ModelSpend needs to know which long prefixes repeat. For
 each request it keeps, per reusable prefix, a keyed hash (HMAC-SHA256 with a random key that lives only in your own database, truncated) and a token
-estimate. The hash cannot be reversed or matched against anything outside this database; the text is never stored. Turn it off with
+estimate, plus a second keyed hash of the same prefix with its numbers, dates and ids blanked, which is how a timestamp near the top is recognised. The hash cannot be reversed or matched against anything outside this database; the text is never stored. Turn it off with
 `"track_prefixes": false` in settings.json (or MODELSPEND_TRACK_PREFIXES=0); `modelspend caching --forget` erases what is stored.
 
 Two prefixes are tracked per request, each including the tools and response schema (which are part of what a provider caches):
@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from typing import Any
 
 from .tokens import estimate_input_tokens
@@ -35,8 +36,20 @@ def _ser(messages: list[Message], schema: dict[str, Any] | None, tools: list[Too
     return "\x1d".join(parts)
 
 
+_VOLATILE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"  # uuid
+    r"|\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b"  # long hex id
+    r"|\d+"  # any number: timestamps, counters, dates
+    r"|\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|April|June|July|August|September|October|November|December)\b")
+
+
+def _shape(text: str) -> str:
+    """The prefix with numbers, dates and ids blanked: two prefixes with the same shape differ only in things like a timestamp or request id."""
+    return _VOLATILE.sub("#", text)
+
+
 def prefix_levels(messages: list[Message], schema: dict[str, Any] | None, tools: list[ToolSpec] | None, salt: bytes) -> list[dict[str, Any]]:
-    """[{level, h, tokens}] for each reusable prefix long enough to be cached. Empty for short prompts (nothing is tokenized)."""
+    """[{level, h, hn, tokens}] for each reusable prefix long enough to be cached. Empty for short prompts (nothing is tokenized)."""
     lead = 0
     while lead < len(messages) and messages[lead].role == "system":
         lead += 1
@@ -55,7 +68,8 @@ def prefix_levels(messages: list[Message], schema: dict[str, Any] | None, tools:
         tokens = estimate_input_tokens(messages[:n], schema, tools)[0]
         if tokens < MIN_PREFIX_TOKENS:
             continue
-        out.append({"level": level, "h": hmac.new(salt, text.encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:16], "tokens": tokens})
+        out.append({"level": level, "h": hmac.new(salt, text.encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:16], "tokens": tokens,
+                    "hn": hmac.new(salt, b"shape:" + _shape(text).encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:16]})
     return out
 
 

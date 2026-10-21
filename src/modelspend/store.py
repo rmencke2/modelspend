@@ -41,7 +41,7 @@ create table if not exists shadow_results(
   used_cost real, cand_cost real, judge_cost real, cand_input int, cand_output int);
 create index if not exists shadow_cat on shadow_results(category, cand_provider, cand_model);
 create table if not exists prefix_stats(
-  request_id text, ts real, provider text, model text, level text, h text, tokens int);
+  request_id text, ts real, provider text, model text, level text, h text, tokens int, hn text);
 create index if not exists prefix_seen on prefix_stats(provider, model, h, ts);
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
@@ -76,6 +76,9 @@ class Store:
         for col, decl in (("project", "text"), ("agent", "text"), ("run_id", "text"), ("labels", "text"), ("pinned", "int default 0")):
             if col not in have:
                 self.db.execute(f"alter table requests add column {col} {decl}")
+        # 0.8.0b3: the shape hash that recognises a prefix drifting in numbers or ids (rows from 0.8.0b1/b2 simply have none)
+        if "hn" not in {r[1] for r in self.db.execute("pragma table_info(prefix_stats)")}:
+            self.db.execute("alter table prefix_stats add column hn text")
         self.db.execute("create index if not exists requests_project_agent on requests(project, agent, ts)")
         self.db.execute("create index if not exists attempts_request on attempts(request_id)")
         self.db.commit()
@@ -191,8 +194,8 @@ class Store:
             return
         now = time.time()
         with self.lock:
-            self.db.executemany("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens) values (?,?,?,?,?,?,?)",
-                                [(request_id, now, provider, model, lv["level"], lv["h"], lv["tokens"]) for lv in levels])
+            self.db.executemany("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens, hn) values (?,?,?,?,?,?,?,?)",
+                                [(request_id, now, provider, model, lv["level"], lv["h"], lv["tokens"], lv.get("hn")) for lv in levels])
             self.db.commit()
 
     def forget_prefixes(self) -> int:
