@@ -292,3 +292,13 @@ def test_http_api_refuses_unattended_auto_apply(rig, monkeypatch):
     for body in ({"provider": "anthropic", "auto_apply": True}, {"provider": "anthropic", "max_change_pct": 1e9}):
         r = c.post("/v1/pricing/refresh", json=body)
         assert r.status_code == 400 and "only available from the CLI" in r.json()["error"]["message"]
+
+
+async def test_a_page_with_rows_matching_no_catalog_model_is_not_accepted_as_unchanged(rig):
+    rig.extraction = {"models": [{"name": "Claude Mystery 9", "input_per_mtok": 0.10, "output_per_mtok": 0.50}]}
+    rig.html = page(("Claude Mystery 9", "0.10", "0.50"))
+    first = await rig.refresh()
+    assert first["state"] == "no_changes" and first["unmatched"] == 1
+    assert "anthropic" not in load_snapshots(rig.cfg)  # no baseline: otherwise the next run says 'unchanged' and the rows are never shown again
+    again = await rig.refresh()
+    assert again["state"] == "no_changes" and again["unmatched"] == 1 and len(rig.ad.calls) == 2

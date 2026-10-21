@@ -310,7 +310,7 @@ async def refresh_provider(
     result = {"provider": provider, "extractor": meta, "changes": len(changes), "unmatched": len(unmatched), "unmatched_rows": unmatched,
               "unverified": len(unverified), "ambiguous": len(ambiguous), "page_truncated": truncated}
     if not changes:
-        if kind == "fetched" and not unverified:
+        if kind == "fetched" and not unverified and not unmatched and not ambiguous:  # rows nobody matched must come back on the next run, not be hidden behind "unchanged"
             accept_baseline(cfg, provider, src.pricing_url, page_hash or "")  # page changed but prices did not: stop re-checking it
         result.update(state="no_changes", detail="no price differs from the catalog" + (f"; {len(unmatched)} page rows match no catalog model" if unmatched else ""))
         if unverified or unmatched or ambiguous:
