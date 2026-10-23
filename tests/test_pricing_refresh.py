@@ -9,7 +9,7 @@ from modelspend.cli import app
 from modelspend.engine import Engine
 from modelspend.overrides import apply_assignments
 from modelspend.pricing_refresh import (
-    apply_proposal, get_proposal, list_proposals, match_models, norm, number_in_text, refresh_provider, reject_proposal,
+    apply_proposal, get_proposal, verify_entry, list_proposals, match_models, norm, number_in_text, refresh_provider, reject_proposal,
 )
 from modelspend.providers.base import ProviderResponse
 from modelspend.providers.mock import ScriptedAdapter
@@ -126,7 +126,7 @@ async def test_hallucinated_numbers_and_far_away_text_are_rejected(rig):
     assert r["state"] == "no_changes" and r["unverified"] == 3 and r["changes"] == 0
     p = get_proposal(rig.cfg, r["proposal_id"])
     assert p["status"] == "informational" and all(u["problems"] for u in p["unverified"])
-    assert "not printed on or next to the row" in p["unverified"][0]["problems"][0]
+    assert "on the page but not on this model's row" in p["unverified"][0]["problems"][0]
     assert Catalog.from_config(rig.cfg).get("anthropic/claude-haiku-5-5").pricing.input_per_mtok == 0.10
 
 
@@ -309,3 +309,10 @@ async def test_a_page_that_yields_no_rows_is_an_error_and_is_not_accepted_as_a_b
     r = await rig.refresh()
     assert r["state"] == "error" and "pricing paste anthropic" in r["detail"] and "characters of page text" in r["detail"]
     assert "anthropic" not in load_snapshots(rig.cfg)
+
+
+def test_a_number_elsewhere_on_the_page_is_called_that_not_just_missing():
+    text = "MODEL\tflash\tpro\n" + "filler line\n" * 12 + "PRICE\t$0.003\t$0.022\n"
+    msg = verify_entry({"name": "flash", "input_per_mtok": 0.003}, text)
+    assert msg and "on the page but not on this model's row" in msg[0]
+    assert "not printed on or next to the row" in verify_entry({"name": "flash", "input_per_mtok": 7.77}, text)[0]

@@ -55,7 +55,10 @@ SYSTEM = (
     "Rules: one entry per model row. `name` is the model name exactly as printed. Use only the STANDARD (paid, non-batch) "
     "text-token prices, in USD per 1,000,000 tokens, copying each number exactly as printed. Put variants (prompt-length "
     "tiers, batch/flex/priority columns, caveats) in `notes`. If a price is not shown, or is printed per a different unit, "
-    "omit that field. Never calculate, convert or estimate a price. Skip image, audio, video, embedding and tool-fee rows."
+    "omit that field. Never calculate, convert or estimate a price. Skip image, audio, video, embedding and tool-fee rows.\n"
+    "Field meanings: `input_per_mtok` is the price of ordinary UNCACHED input (a page may call it cache miss); `cached_input_per_mtok` is the price of "
+    "input served from cache (cache hit); `cache_write_per_mtok` only if the page prints a separate price for writing to a cache, never the "
+    "uncached input price. If a page lists peak and off-peak prices, use the peak (higher) price and give the off-peak figures in `notes`."
 )
 
 
@@ -91,7 +94,9 @@ def verify_entry(entry: dict, page_text: str) -> list[str]:
     problems = []
     for f in PRICE_FIELDS:
         if f in entry and not any(number_in_text(float(entry[f]), "\n".join(lines[i:i + ROW_WINDOW])) for i in starts):
-            problems.append(f"{f}={entry[f]} is not printed on or next to the row for '{entry['name']}'")
+            where = ("is on the page but not on this model's row (is it a table with models as columns, or the wrong field?)"
+                     if number_in_text(float(entry[f]), page_text) else "is not printed on or next to the row")
+            problems.append(f"{f}={entry[f]} {where} for '{entry['name']}'")
     return problems
 
 
