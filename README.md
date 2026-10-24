@@ -83,7 +83,7 @@ modelspend status
 - **Choosing vendors.** `providers enable/disable` sets the default allowlist used when a request doesn't name providers; a request (`providers=[...]`, `--providers`, the `modelspend` extension) always overrides it. Models from different vendors compete only when you enable more than one.
 - **Choosing models.** `models list` shows every model, whether it is routable and, if not, why (no key, unverified, no pricing, ...). `models disable anthropic/claude-opus-5-5` keeps it out of routing; `models enable` brings it back. The quality profile (`economy`, `balanced`, `high_assurance`) then decides how strong a model each task needs.
 - **Pricing links.** Each provider's official pricing page URL lives in one place (`sources.json`), not in the code. Change it with `modelspend sources set <provider> <url>` (tracking parameters such as `utm_source` are stripped), `MODELSPEND_PRICING_URL_<PROVIDER>`, or by editing `~/.modelspend/sources.json`; `sources reset <provider>` restores the shipped link. Catalog prices without their own `source_url` cite the configured page. `modelspend sources check` fetches each page and tells you if it **changed** since your last accepted baseline (it never edits prices: re-verify, update with `catalog set`, then `sources check --accept`).
-- **One-screen overview:** `modelspend status`.
+- **One-screen overview:** `modelspend status`. **Something not working, or numbers that look wrong:** `modelspend doctor` checks your setup offline (keys, which models are usable and why not, stale or missing prices, the last `verify` result, calls with no price, file permissions) and prints the command that fixes each finding. It sends nothing and spends nothing.
 
 ### Running the server
 

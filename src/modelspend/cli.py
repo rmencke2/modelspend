@@ -740,6 +740,8 @@ def verify(providers: Optional[list[str]] = typer.Argument(None, help="Providers
     if not yes and not typer.confirm("Go ahead?", default=True):
         raise typer.Exit(1)
     reports = asyncio.run(verify_all(adapters, cat, targets, model=model, cache=cache, structured=structured, progress=lambda s: typer.echo(f"  {s}", err=True), timeout_s=timeout))
+    from .doctor import save_verify
+    save_verify(cfg.home, reports)  # so `modelspend doctor` can say what the last live check found
     typer.echo("\nResult:\n" + to_table(reports))
     md = to_markdown(reports, __version__, str(_date.today()))
     if report_file:
@@ -1592,6 +1594,25 @@ def status(catalog: Optional[str] = CAT):
     typer.echo("\npricing sources (change with `modelspend sources set <provider> <url>`):")
     for p, s in sorted(resolve_sources(cfg).items(), key=lambda kv: registry.all_providers().index(kv[0])):
         typer.echo(f"  {p:<10}{s.pricing_url}  [{s.origin}]")
+
+
+@app.command()
+def doctor(fmt: str = typer.Option("text", "--format", help="text or json."),
+           catalog: Optional[str] = CAT):
+    """Check your setup offline and say what to fix: keys, usable models, prices, the last live check, unpriced calls, security. Sends nothing, spends nothing."""
+    from .doctor import Finding, diagnose, load_verify, summary, to_text
+    if fmt not in ("text", "json"):
+        raise typer.BadParameter("--format must be text or json")
+    try:
+        cfg = Config.from_env()
+        cat = _catalog(cfg, catalog)
+    except (ValueError, OSError) as e:  # a broken settings.json is exactly what doctor should be able to report
+        findings = [Finding("problem", "setup", f"ModelSpend cannot load your settings or catalog: {str(e)[:400]}", "fix the file named above, or move it aside to start over")]
+    else:
+        store = _store() if cfg.db_path and Path(cfg.db_path).exists() else None
+        findings = diagnose(cfg, cat, store, routability=lambda m: routability(m, cfg), verify_results=load_verify(cfg.home))
+    typer.echo(json.dumps({"summary": summary(findings), "findings": [f.as_dict() for f in findings]}, indent=2) if fmt == "json" else to_text(findings))
+    raise typer.Exit(1 if any(f.level == "problem" for f in findings) else 0)
 
 
 # ---------------------------------------------------------------- sources
