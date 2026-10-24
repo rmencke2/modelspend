@@ -1597,6 +1597,34 @@ def status(catalog: Optional[str] = CAT):
 
 
 @app.command()
+def digest(period: str = typer.Option("day", "--period", help="day (the last 24 hours against the 24 before) or week (7 days against the 7 before)."),
+           fmt: str = typer.Option("text", "--format", help="text or json."),
+           post: bool = typer.Option(False, "--post", help="Also send it to the webhook you configured (settings.json \"digest\", or MODELSPEND_DIGEST_WEBHOOK)."),
+           include_projects: bool = typer.Option(False, "--include-projects", help="Name projects in what is posted (they are always shown when printing here).")):
+    """A short spend digest: the last day or week against the one before, the biggest movers, budgets near their limit and anything that looks off."""
+    from .digest import DigestError, build_digest, post as post_digest, to_json, to_text
+    if fmt not in ("text", "json"):
+        raise typer.BadParameter("--format must be text or json")
+    cfg = Config.from_env()
+    if post and not cfg.digest_webhook:
+        typer.echo('no webhook configured: add {"digest": {"webhook": "https://...", "format": "slack"}} to settings.json, or set MODELSPEND_DIGEST_WEBHOOK (see docs/digest.md)', err=True)
+        raise typer.Exit(2)
+    try:
+        d = build_digest(_store(), period=period)
+    except DigestError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(to_json(d) if fmt == "json" else to_text(d))
+    if post:
+        try:
+            post_digest(cfg.digest_webhook, cfg.digest_format, to_text(d, include_projects=include_projects), d if include_projects else {**d, "projects": []})
+        except DigestError as e:
+            typer.echo(f"\nnot posted: {e}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"\nposted ({cfg.digest_format})" + ("" if include_projects else "; project names were left out (--include-projects adds them)"))
+
+
+@app.command()
 def doctor(fmt: str = typer.Option("text", "--format", help="text or json."),
            catalog: Optional[str] = CAT):
     """Check your setup offline and say what to fix: keys, usable models, prices, the last live check, unpriced calls, security. Sends nothing, spends nothing."""

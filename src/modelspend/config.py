@@ -109,6 +109,19 @@ def _timeout(env: str | None, setting: Any, default: float = 60.0) -> float:
     return v
 
 
+def _digest(settings: dict, env: dict) -> tuple[str | None, str]:
+    """settings.json {"digest": {"webhook": "https://...", "format": "slack|discord|json"}}, overridden by MODELSPEND_DIGEST_WEBHOOK / MODELSPEND_DIGEST_FORMAT."""
+    from .digest import FORMATS, validate_webhook
+    d = settings.get("digest") or {}
+    if not isinstance(d, dict):
+        raise ValueError("settings.json: 'digest' must be an object like {\"webhook\": \"https://...\", \"format\": \"slack\"}")
+    url = env.get("MODELSPEND_DIGEST_WEBHOOK") or d.get("webhook") or None
+    fmt = str(env.get("MODELSPEND_DIGEST_FORMAT") or d.get("format") or "slack").strip().lower()
+    if fmt not in FORMATS:
+        raise ValueError(f"digest format must be one of {', '.join(FORMATS)}, got {fmt!r}")
+    return (validate_webhook(url) if url else None), fmt
+
+
 def _cache_markers(env: str | None, setting: Any, tracking: bool) -> str:
     """off (default), repeats (mark a prompt start only after it has been sent before) or always. `repeats` needs prefix tracking to know what repeats."""
     raw = env if env not in (None, "") else setting
@@ -235,6 +248,8 @@ class Config:
     exact_token_counts: bool = False
     classifier_model_enabled: bool = False
     anthropic_cache_markers: str = "off"  # "off" | "repeats" | "always": send Anthropic cache_control markers (see cachemarkers.py)
+    digest_webhook: str | None = field(default=None, repr=False)  # where `modelspend digest --post` sends the digest (usually holds a secret: never printed)
+    digest_format: str = "slack"  # slack | discord | json
     track_prefixes: bool = True  # keep a keyed hash and token count of long repeated prompt prefixes (never their text) for `modelspend caching`
     sensitive_providers: list[str] = field(default_factory=list)
     host: str = "127.0.0.1"
@@ -311,6 +326,7 @@ class Config:
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             track_prefixes=_bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True)),
+            digest_webhook=_digest(settings, e)[0], digest_format=_digest(settings, e)[1],
             anthropic_cache_markers=_cache_markers(e.get("MODELSPEND_ANTHROPIC_CACHE_MARKERS"), settings.get("anthropic_cache_markers"),
                                                    _bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True))),
             request_timeout_s=_timeout(e.get("MODELSPEND_REQUEST_TIMEOUT_S"), settings.get("request_timeout_s")),
