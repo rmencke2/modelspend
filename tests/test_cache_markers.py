@@ -283,3 +283,15 @@ def test_the_live_check_script_on_claude_writes_once_reads_after_and_never_pays_
     pre = reads // 10
     assert reads == 10 * pre and ok["missed_tokens"] <= 0.1 * ok["repeat_tokens"]  # request 1 unmarked, 2 wrote, 3 to 12 read
     assert abs(ok["realized_saving_usd"] - (reads * 2.7 - pre * 0.75) / 1e6) < 1e-12  # the one write's premium comes off the saving
+
+
+def test_a_provider_that_counts_more_cached_tokens_than_our_estimate_is_believed_up_to_the_request_total():
+    s = Store(":memory:")
+    seed_anthropic(s, [0, 7489, 0, 0, 0], [0, 0, 7489, 7489, 7489], tokens=6193)  # estimate 6,193; Claude's own count was 7,489
+    s.db.execute("update prefix_stats set tokens = 6193")
+    s.db.execute("update requests set input_tokens = 7503")
+    r = adv(s, "repeats")
+    assert r["cached_tokens"] == 3 * 7489 and r["missed_tokens"] == 0 and r["prefix_tokens"] == 7489 and r["advice"] == "caching is working"
+    assert abs(r["realized_saving_usd"] - (3 * 7489 * 2.7 - 7489 * 0.75) / 1e6) < 1e-12
+    s.db.execute("update requests set input_tokens = 7000")  # but never more than the request itself held
+    assert adv(s, "repeats")["cached_tokens"] == 3 * 7000

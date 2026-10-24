@@ -55,7 +55,7 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
                        window_s: float = DEFAULT_WINDOW_S) -> dict[str, Any]:
     by_req: dict[str, dict[str, Any]] = {}
     for r in _events(store, since, project):
-        x = by_req.setdefault(r["rid"], {"ts": r["ts"], "provider": r["provider"], "model": r["model"], "cached": r["cached"], "written": r["written"], "levels": []})
+        x = by_req.setdefault(r["rid"], {"ts": r["ts"], "provider": r["provider"], "model": r["model"], "cached": r["cached"], "written": r["written"], "total": r["total"], "levels": []})
         # our estimate can overshoot (6,200 against 5,100 real on the first live run): the provider's own count of this request's input (requests.input_tokens already includes the cached part) is the ceiling
         x["levels"].append((r["level"], r["h"], min(r["tokens"], r["total"]) if r["total"] else r["tokens"], r["hn"]))
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -75,12 +75,16 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
         # a cache serves the longest prefix it holds: repeats, cached tokens and savings belong to that one, never to both the system prompt and the context
         best = max(repeats or x["levels"], key=lambda lv: lv[2])
         g = group(prov, model, best)
-        g["cached_tokens"] += min(x["cached"], best[2])
-        g["written_tokens"] += min(x["written"], best[2])  # cache writes are billed above normal input: they come off what caching saved
+        # our estimate can undershoot a provider's own tokenizer (7,489 cached tokens reported against a 6,193 estimate on Claude): the provider's count of what it
+        # cached or wrote proves the prefix was at least that long, so it is never clipped to the estimate (only to the request's total input)
+        size = max(best[2], min(max(x["cached"], x["written"]), x["total"] or max(x["cached"], x["written"])))
+        g["tokens"] = max(g["tokens"], size)
+        g["cached_tokens"] += min(x["cached"], size)
+        g["written_tokens"] += min(x["written"], size)  # cache writes are billed above normal input: they come off what caching saved
         if repeats:
             g["repeats"] += 1
-            g["repeat_tokens"] += best[2]
-            g["written_repeat_tokens"] += min(x["written"], best[2])  # a repeat that wrote the cache is what makes the next ones hits, not a miss
+            g["repeat_tokens"] += size
+            g["written_repeat_tokens"] += min(x["written"], size)  # a repeat that wrote the cache is what makes the next ones hits, not a miss
         # the same prefix with only numbers, dates or ids changed: a provider cannot cache it, and it is the commonest way to lose the cache
         moved = [lv for lv in x["levels"] if lv[3] and lv not in repeats and x["ts"] - shapes.get((prov, model, lv[3]), -1e18) <= window_s]
         if moved:
