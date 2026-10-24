@@ -3,6 +3,7 @@
     modelspend keys set openai
     python examples/caching_live_check.py                           # OpenAI gpt-4.1-nano
     python examples/caching_live_check.py deepseek/deepseek-flash   # any provider/model in your catalog that caches automatically
+    python examples/caching_live_check.py anthropic/claude-haiku-5-5   # Claude: cache markers are switched on for this run only
 
 Phase A sends 12 requests that share one long, fixed system prompt, a couple of seconds apart: after the first, OpenAI should serve the prompt from its
 cache and the table should say "caching is working". Phase B sends 8 requests whose system prompt starts with the current time, so every call has a
@@ -14,11 +15,13 @@ need a few seconds: pass a longer pause in seconds as the second argument.
 """
 from __future__ import annotations
 
+import dataclasses
 import sys
 import time
 
 from modelspend import ModelSpend
 from modelspend.cacheadvice import build_cache_advice, to_table
+from modelspend.config import Config
 
 PIN = "openai/gpt-4.1-nano"
 PROJECT = "caching-live-check"
@@ -28,18 +31,23 @@ FIXED_B = "You are a billing agent for an invoicing app. " + "".join(POLICY.form
 QUESTIONS = ["Where is my invoice?", "Can I change my plan?", "How do I cancel?", "Do you offer a student discount?"]
 
 
+def _cache_line(u) -> str:
+    total = u.input_tokens + u.cache_read_tokens + u.cache_write_tokens
+    return f"cached {u.cache_read_tokens:>5}" + (f", wrote {u.cache_write_tokens:>5}" if u.cache_write_tokens else "") + f" of {total:>5} input tokens"
+
+
 def run(ms: ModelSpend, *, pin: str = PIN, pause_s: float = 2.0, a: int = 12, b: int = 8) -> str:
     started = time.time() - 1
     for i in range(a):
         r = ms.route([{"role": "system", "content": FIXED_A}, {"role": "user", "content": QUESTIONS[i % len(QUESTIONS)]}],
                      pin=pin, project=PROJECT, agent="phase-a", task_type="classification", max_output_tokens=16)
-        print(f"A{i + 1:>2}. cached {r.usage.cache_read_tokens:>5} of {r.usage.input_tokens + r.usage.cache_read_tokens:>5} input tokens")
+        print(f"A{i + 1:>2}. {_cache_line(r.usage)}")
         time.sleep(pause_s)
     for i in range(b):
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{time.time_ns() % 10**9:09d}Z"  # sub-second digits: two calls never share a stamp
         r = ms.route([{"role": "system", "content": f"Current time: {stamp}\n" + FIXED_B}, {"role": "user", "content": QUESTIONS[i % len(QUESTIONS)]}],
                      pin=pin, project=PROJECT, agent="phase-b", task_type="classification", max_output_tokens=16)
-        print(f"B{i + 1:>2}. cached {r.usage.cache_read_tokens:>5} of {r.usage.input_tokens + r.usage.cache_read_tokens:>5} input tokens")
+        print(f"B{i + 1:>2}. {_cache_line(r.usage)}")
         time.sleep(pause_s)
     out = to_table(build_cache_advice(ms.store, ms.catalog, ms.config, since=started, project=PROJECT))
     print("\n" + out)
@@ -49,7 +57,11 @@ def run(ms: ModelSpend, *, pin: str = PIN, pause_s: float = 2.0, a: int = 12, b:
 if __name__ == "__main__":
     pin = sys.argv[1] if len(sys.argv) > 1 else PIN
     pause = float(sys.argv[2]) if len(sys.argv) > 2 else 2.0
-    ms = ModelSpend(providers=[pin.split("/")[0]])
-    if not ms.config.track_prefixes:
+    cfg = Config.from_env()
+    if pin.startswith("anthropic/") and cfg.anthropic_cache_markers == "off":  # Claude caches only what a request marks
+        cfg = dataclasses.replace(cfg, anthropic_cache_markers="repeats")
+        print('note: "anthropic_cache_markers" is off in your settings; it is on ("repeats") for this run only\n')
+    ms = ModelSpend(providers=[pin.split("/")[0]], config=cfg)
+    if not ms.config.track_prefixes:  # (also required by the Claude markers)
         raise SystemExit("Prefix tracking is off. Remove track_prefixes from settings.json (or set MODELSPEND_TRACK_PREFIXES=1) and run again.")
     run(ms, pin=pin, pause_s=pause)

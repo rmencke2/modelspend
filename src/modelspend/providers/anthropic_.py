@@ -30,6 +30,19 @@ def normalize_usage(u: Any) -> Usage:
     )
 
 
+CACHE_MARK = {"type": "ephemeral"}
+
+
+def _mark_last_block(msg: dict[str, Any]) -> None:
+    """Put a cache breakpoint on the last content block of a message (a plain string becomes one text block). Empty text cannot be marked."""
+    c = msg["content"]
+    if isinstance(c, str):
+        if c:
+            msg["content"] = [{"type": "text", "text": c, "cache_control": dict(CACHE_MARK)}]
+    elif c:
+        c[-1]["cache_control"] = dict(CACHE_MARK)
+
+
 def _blocks(m, tool_names: dict[str, str]) -> dict[str, Any]:
     if m.role == "tool":
         return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": m.tool_call_id, "content": m.content or ""}]}
@@ -66,7 +79,8 @@ class AnthropicAdapter(ProviderAdapter):
             raise InvalidRequest("anthropic adapter cannot combine tools with response_schema")
         system = "\n\n".join(m.content or "" for m in req.messages if m.role == "system")
         msgs = []
-        for m in req.messages:
+        last_context = len(req.messages) - 2  # the prompt start a "context" cache covers: everything but the final message
+        for i, m in enumerate(req.messages):
             if m.role == "system":
                 continue
             b = _blocks(m, {})
@@ -75,9 +89,11 @@ class AnthropicAdapter(ProviderAdapter):
                 msgs[-1]["content"].extend(b["content"])
             else:
                 msgs.append(b)
+            if req.cache_prefix == "context" and i == last_context:
+                _mark_last_block(msgs[-1])
         p: dict[str, Any] = {"model": req.model, "messages": msgs, "max_tokens": req.max_output_tokens, "timeout": req.timeout_s}
         if system:
-            p["system"] = system
+            p["system"] = [{"type": "text", "text": system, "cache_control": dict(CACHE_MARK)}] if req.cache_prefix == "system" else system
         if req.temperature is not None:
             p["temperature"] = req.temperature
         if req.tools:

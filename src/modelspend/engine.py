@@ -24,6 +24,7 @@ from .errors import (
     AllAttemptsFailed, BudgetTooLow, InvalidRequest, ModelSpendError, NoEligibleModel, ProviderError, StreamInterrupted,
 )
 from .policy import POLICY_VERSION
+from .cachemarkers import choose as choose_cache_prefix
 from .prefixes import track as track_prefix
 from .pricing import cost_for, estimate_cost
 from .providers.base import ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, StreamEnd
@@ -238,6 +239,7 @@ class Engine:
             tool_choice=req.tool_choice, options=dict(req.provider_options.get(model.provider, {})),
             timeout_s=self.cfg.request_timeout_s,
             reasoning_in_output=model.pricing.reasoning_in_output if model.pricing else True,
+            cache_prefix=choose_cache_prefix(self.store, self.cfg.anthropic_cache_markers, req, model.provider, model.id),
         )
 
     def _gate(self, ledger: Ledger, cand: Candidate, kind: str, purpose: str) -> bool:

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Anthropic cache markers (opt-in, not yet run against Anthropic).** Claude caches only what a request marks with `cache_control`, so until now `modelspend caching` could only tell a Claude user that a repeated prompt was not being cached and that ModelSpend could not fix it. `"anthropic_cache_markers"` in settings.json (or `MODELSPEND_ANTHROPIC_CACHE_MARKERS`) is `off` (default; requests unchanged), `repeats` (mark a prompt start only after the same one was sent to the same model in the last five minutes, so a prompt that never repeats never pays the write premium) or `always`. One prefix is marked, the longest that qualifies, on the system block or on the last block before the final message. The advisor now subtracts the cache-write premium from "saved so far" (it can go negative), no longer counts the request that wrote the cache as a miss, and its Claude advice says how to turn the markers on, or why markers that are on produced no hits. `repeats` refuses to start with prefix tracking off. Tested against fakes only: the request shape comes from Anthropic's documentation and `python examples/caching_live_check.py anthropic/<model>` is the live check.
+
 ## 0.8.0b3 - 2026-10-23
 
 (0.8.0b2 was prepared but never released; its entries are included below.)

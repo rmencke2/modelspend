@@ -24,6 +24,7 @@ class ProviderRequest(BaseModel):
     timeout_s: float = 60.0
     # From the catalog: do provider-reported output tokens already include reasoning tokens?
     reasoning_in_output: bool = True
+    cache_prefix: str | None = None  # "system" | "context": ask the provider to cache that prompt prefix (Anthropic cache_control); adapters that cache automatically ignore it
 
 
 class ProviderResponse(BaseModel):

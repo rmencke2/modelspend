@@ -208,7 +208,7 @@ def test_anthropic_needs_markers_and_the_write_premium_comes_off_the_projection(
     seed(s, 5, 60, provider="anthropic", model="gpt-x")
     plain = advise(s, cat("anthropic", cached=0.3, inp=3.0))["rows"][0]
     withw = advise(s, cat("anthropic", cached=0.3, inp=3.0, write=3.75))["rows"][0]
-    assert "needs cache markers" in plain["advice"] and plain["kind"] == "explicit"
+    assert "sends no markers unless you turn them on" in plain["advice"] and plain["kind"] == "explicit"
     assert withw["potential_saving_usd"] < plain["potential_saving_usd"]
     assert abs(plain["potential_saving_usd"] - withw["potential_saving_usd"] - 1 * 2000 * 0.75 / 1e6) < 1e-12  # one cache write in the window
 

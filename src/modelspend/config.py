@@ -109,6 +109,17 @@ def _timeout(env: str | None, setting: Any, default: float = 60.0) -> float:
     return v
 
 
+def _cache_markers(env: str | None, setting: Any, tracking: bool) -> str:
+    """off (default), repeats (mark a prompt start only after it has been sent before) or always. `repeats` needs prefix tracking to know what repeats."""
+    raw = env if env not in (None, "") else setting
+    mode = "off" if raw is None else str(raw).strip().lower()
+    if mode not in ("off", "repeats", "always"):
+        raise ValueError(f"anthropic_cache_markers must be off, repeats or always (MODELSPEND_ANTHROPIC_CACHE_MARKERS or settings.json), got {raw!r}")
+    if mode == "repeats" and not tracking:
+        raise ValueError("anthropic_cache_markers=repeats needs prefix tracking to know what repeats, but track_prefixes is off: turn tracking on, or use \"always\"")
+    return mode
+
+
 def _settings_bool(settings: dict, key: str, default: bool) -> bool:
     v = settings.get(key, default)
     if not isinstance(v, bool):
@@ -223,6 +234,7 @@ class Config:
     request_timeout_s: float = 60.0
     exact_token_counts: bool = False
     classifier_model_enabled: bool = False
+    anthropic_cache_markers: str = "off"  # "off" | "repeats" | "always": send Anthropic cache_control markers (see cachemarkers.py)
     track_prefixes: bool = True  # keep a keyed hash and token count of long repeated prompt prefixes (never their text) for `modelspend caching`
     sensitive_providers: list[str] = field(default_factory=list)
     host: str = "127.0.0.1"
@@ -299,6 +311,8 @@ class Config:
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             track_prefixes=_bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True)),
+            anthropic_cache_markers=_cache_markers(e.get("MODELSPEND_ANTHROPIC_CACHE_MARKERS"), settings.get("anthropic_cache_markers"),
+                                                   _bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True))),
             request_timeout_s=_timeout(e.get("MODELSPEND_REQUEST_TIMEOUT_S"), settings.get("request_timeout_s")),
             host=e.get("MODELSPEND_HOST", "127.0.0.1"),
             port=int(e.get("MODELSPEND_PORT", 8787)),

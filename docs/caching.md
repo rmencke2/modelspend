@@ -18,9 +18,25 @@ One row per long prompt start that was sent more than once: its size, how many r
 - *caching is working*: the provider reported cache hits for (almost) every repeat;
 - *differs between calls only in numbers, dates or ids* (marked "drifting" in JSON): the start of the prompt changes from call to call in a timestamp, request id or counter, so a provider can never cache it. Put fixed text first and variable text last. ModelSpend recognises this by a second keyed hash of the same prefix with its numbers, dates and ids blanked: two different prefixes with one such hash are the same text apart from those. It cannot see a change in the words themselves, or in the order of items, which look like unrelated prompts;
 - *the same prompt start was sent again but no cached tokens were reported*: the text did not change, so the usual causes are a prompt below the model's minimum cacheable size (our token count is an estimate, and some models need more than 1,024), a model that does not cache, or a cache that expired. `modelspend verify <provider> --cache` tests the provider on your key;
-- *needs cache markers*: Anthropic caches only where the request marks what to cache (`cache_control`). **ModelSpend does not send those markers yet**, so for Claude the row is information, not something ModelSpend can fix for you;
+- *Anthropic caches only what a request marks* (`cache_control`), and ModelSpend sends no markers unless you turn them on (see below). With them on, a row reads like any other: working, or a reason it is not;
 - *repeats are more than N minutes apart*: a cache would have expired between them;
 - *unknown provider*: ModelSpend does not assume a provider caches. `modelspend verify <provider> --cache` tests it on your key.
+
+## Cache markers for Claude (off by default)
+
+OpenAI and DeepSeek cache a repeated prompt start by themselves. Anthropic does not: a Claude call gets a cache hit only if the request marks the prefix with `cache_control`. ModelSpend can add that marker, once you turn it on, in `settings.json` (or `MODELSPEND_ANTHROPIC_CACHE_MARKERS`):
+
+```json
+{ "anthropic_cache_markers": "repeats" }
+```
+
+- `repeats` (the setting to start with): a prefix is marked only when the same prefix was already sent to the same model in the last five minutes, so the first request is never marked and a prompt that never repeats never pays for a marker. It needs prefix tracking, and refuses to start without it.
+- `always`: every long prefix is marked, including the first, which pays the write premium whether or not a second request follows.
+- `off` (default): nothing changes, and the request is byte-for-byte what it was before.
+
+What it costs and saves: a cache **write** is billed above the normal input price (see `cache_write_per_mtok` in your catalog), a cache **read** far below it. So a marker pays off only when the prefix is reused soon enough and often enough; the table's "saved so far" subtracts the write premium, and can be negative for a prefix that was marked and then barely reused. Only one prefix is marked per request, the longest that qualifies (the system prompt with tools and schema, or everything before the last message). A prefix below the model's minimum cacheable size (1,024 tokens, more on some models) is ignored by Anthropic without error or charge. The cache lasts five minutes from its last use. Nothing is stored beyond the keyed hashes and token counts prefix tracking already keeps.
+
+`python examples/caching_live_check.py anthropic/<model>` runs the check below on Claude with `repeats` switched on for that run only.
 
 ## Check it on your own key
 
@@ -43,4 +59,4 @@ Savings are `tokens x (input price - cached-input price)` from **your catalog**,
 - **Estimates.** Prefix sizes are estimates (exact only with the optional tiktoken extra), and a real cache hit also depends on the provider's own rules and load. Realized savings use the provider's reported cached tokens; potential savings are a projection.
 - **A growing chat history is not detected as a repeat**, because each turn's context is new. A provider may still cache it, and the cached tokens it reports are counted.
 - **Only requests made through ModelSpend** after this feature are tracked, and requests that ModelSpend's own eval and shadow runs make are excluded.
-- **Not yet run against live traffic.** The arithmetic is tested on constructed timelines; the provider behaviours it assumes (OpenAI and DeepSeek automatic, Anthropic explicit) come from their documentation. Whether a provider reports cached tokens as ModelSpend expects was confirmed live for OpenAI with `modelspend verify --cache` (2026-10-20).
+- **Confirmed live on OpenAI and DeepSeek** (`examples/caching_live_check.py`, 2026-10-21 to 23). **Not yet confirmed live on Anthropic**, whose markers were written from its documentation and tested against a fake that caches only what is marked, nor on Gemini.

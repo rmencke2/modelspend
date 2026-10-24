@@ -45,7 +45,8 @@ def _events(store: Store, since: float | None, project: str | None):
     if project:
         where.append("r.project = ?")
         params.append(project.lower())
-    q = ("select p.request_id rid, r.ts ts, p.provider provider, p.model model, p.level level, p.h h, p.hn hn, p.tokens tokens, coalesce(r.cache_read_tokens, 0) cached, coalesce(r.input_tokens, 0) total "
+    q = ("select p.request_id rid, r.ts ts, p.provider provider, p.model model, p.level level, p.h h, p.hn hn, p.tokens tokens, coalesce(r.cache_read_tokens, 0) cached, coalesce(r.input_tokens, 0) total, "
+         "coalesce((select sum(a.cache_write) from attempts a where a.request_id = r.id), 0) written "
          f"from prefix_stats p join requests r on r.id = p.request_id where {' and '.join(where)} order by r.ts, p.request_id")
     return store.db.execute(q, params)
 
@@ -54,7 +55,7 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
                        window_s: float = DEFAULT_WINDOW_S) -> dict[str, Any]:
     by_req: dict[str, dict[str, Any]] = {}
     for r in _events(store, since, project):
-        x = by_req.setdefault(r["rid"], {"ts": r["ts"], "provider": r["provider"], "model": r["model"], "cached": r["cached"], "levels": []})
+        x = by_req.setdefault(r["rid"], {"ts": r["ts"], "provider": r["provider"], "model": r["model"], "cached": r["cached"], "written": r["written"], "levels": []})
         # our estimate can overshoot (6,200 against 5,100 real on the first live run): the provider's own count of this request's input (requests.input_tokens already includes the cached part) is the ceiling
         x["levels"].append((r["level"], r["h"], min(r["tokens"], r["total"]) if r["total"] else r["tokens"], r["hn"]))
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -64,7 +65,7 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
 
     def group(prov: str, model: str, lv: tuple[str, str, int, str | None]) -> dict[str, Any]:
         return groups.setdefault((prov, model, lv[1]), {"provider": prov, "model": model, "level": lv[0], "id": lv[1][:8], "tokens": lv[2], "requests": 0,
-                                                         "repeats": 0, "repeat_tokens": 0, "cached_tokens": 0})
+                                                         "repeats": 0, "repeat_tokens": 0, "cached_tokens": 0, "written_tokens": 0, "written_repeat_tokens": 0})
 
     for rid, x in sorted(by_req.items(), key=lambda kv: (kv[1]["ts"], kv[0])):
         prov, model = x["provider"], x["model"]
@@ -75,9 +76,11 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
         best = max(repeats or x["levels"], key=lambda lv: lv[2])
         g = group(prov, model, best)
         g["cached_tokens"] += min(x["cached"], best[2])
+        g["written_tokens"] += min(x["written"], best[2])  # cache writes are billed above normal input: they come off what caching saved
         if repeats:
             g["repeats"] += 1
             g["repeat_tokens"] += best[2]
+            g["written_repeat_tokens"] += min(x["written"], best[2])  # a repeat that wrote the cache is what makes the next ones hits, not a miss
         # the same prefix with only numbers, dates or ids changed: a provider cannot cache it, and it is the commonest way to lose the cache
         moved = [lv for lv in x["levels"] if lv[3] and lv not in repeats and x["ts"] - shapes.get((prov, model, lv[3]), -1e18) <= window_s]
         if moved:
@@ -95,7 +98,7 @@ def build_cache_advice(store: Store, catalog: Catalog, cfg: Config, *, since: fl
     for g in groups.values():
         if g["requests"] < 2:
             continue
-        rows.append(_assess(g, catalog, window_s))
+        rows.append(_assess(g, catalog, window_s, cfg.anthropic_cache_markers))
     for d in drifts.values():
         d["requests"] = d["drifts"] + 1  # the first sighting is not a drift but was a request
         rows.append(_assess_drift(d, catalog))
@@ -141,21 +144,27 @@ def _assess_drift(d: dict[str, Any], catalog: Catalog) -> dict[str, Any]:
             "realized_saving_usd": realized, "potential_saving_usd": potential, "advice": advice}
 
 
-def _assess(g: dict[str, Any], catalog: Catalog, window_s: float) -> dict[str, Any]:
+def _assess(g: dict[str, Any], catalog: Catalog, window_s: float, markers: str = "off") -> dict[str, Any]:
     kind = KIND.get(g["provider"], "unknown")
-    missed = max(0, g["repeat_tokens"] - g["cached_tokens"])
+    missed = max(0, g["repeat_tokens"] - g["cached_tokens"] - g["written_repeat_tokens"])
     p = _price(catalog, g)
     realized = potential = None
     if p and p.cached_input_per_mtok is not None:
         diff = (p.input_per_mtok - p.cached_input_per_mtok) / 1_000_000
         realized = g["cached_tokens"] * diff
+        if p.cache_write_per_mtok is not None:
+            realized -= g["written_tokens"] * (p.cache_write_per_mtok - p.input_per_mtok) / 1_000_000
         potential = missed * diff
         if kind == "explicit" and p.cache_write_per_mtok is not None:  # an explicit cache charges extra every time it is (re)written
             potential = max(0.0, potential - (g["requests"] - g["repeats"]) * g["tokens"] * (p.cache_write_per_mtok - p.input_per_mtok) / 1_000_000)
     if g["repeats"] == 0:
         advice = f"repeats are more than {int(window_s // 60)} min apart, so a cache would have expired between them"
-    elif kind == "explicit":
-        advice = "needs cache markers in the request; ModelSpend does not send them yet (shown for information)"
+    elif kind == "explicit" and markers == "off":
+        advice = ("Anthropic caches only what a request marks, and ModelSpend sends no markers unless you turn them on: "
+                  "set \"anthropic_cache_markers\": \"repeats\" in settings.json (see docs/caching.md)")
+    elif kind == "explicit" and g["cached_tokens"] == 0:
+        advice = ("markers are on but no cached tokens were reported: the prefix may be below this model's minimum cacheable size "
+                  "(1,024 tokens, more on some models), or each call's start differs. Test with `modelspend verify anthropic --cache`")
     elif missed <= 0.1 * g["repeat_tokens"]:
         advice = "caching is working"
     elif g["cached_tokens"] == 0 and kind == "automatic":
