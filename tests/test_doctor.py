@@ -55,8 +55,10 @@ def test_a_working_setup_has_no_problem_and_no_warning(cfg, catalog):
 
 def test_a_provider_with_a_key_but_no_models_in_the_catalog_gets_the_exact_sync_command(tmp_path, catalog):
     cfg = Config(home=tmp_path, api_keys={"deepseek": "k"}, key_sources={"deepseek": "environment"})
-    f = find(run(cfg, catalog), "models", "problem")[0]
+    fs = run(cfg, catalog)
+    f = find(fs, "models", "warn")[0]
     assert "no deepseek models" in f.message and f.fix.startswith("modelspend catalog sync --provider deepseek --add-new --only deepseek --write")
+    assert find(fs, "models", "problem")  # and since that was the only provider, nothing at all can be routed
 
 
 def test_a_provider_whose_models_are_all_unusable_names_the_commonest_reason_and_fix(tmp_path):
@@ -64,8 +66,10 @@ def test_a_provider_whose_models_are_all_unusable_names_the_commonest_reason_and
     m["availability"] = "unverified"
     cat = Catalog.load(overrides={"add_models": [m]})
     cfg = Config(home=tmp_path, api_keys={"openai": "k"}, key_sources={"openai": "environment"})
-    f = find(run(cfg, cat), "models", "problem")
+    fs = run(cfg, cat)
+    f = find(fs, "models", "warn")
     assert f and "availability unverified" in f[0].message and f[0].fix == "modelspend catalog sync --provider openai --write"
+    assert find(fs, "models", "problem")[0].fix == "modelspend catalog sync --provider openai --write"
 
 
 def test_an_enabled_provider_without_a_key_is_a_warning(cfg, catalog):
@@ -117,7 +121,10 @@ def test_cached_tokens_with_no_cached_price_are_flagged_because_they_are_costed_
 # ---------------------------------------------------------------- the last live check
 def test_a_provider_never_verified_is_a_note_with_the_command(cfg, catalog):
     f = find(run(cfg, catalog, None, {}), "verify")
-    assert {x.level for x in f} == {"info"} and any(x.fix == "modelspend verify openai --cache" for x in f)
+    assert [x.level for x in f] == ["info"] and f[0].fix == "modelspend verify --cache" and all(p in f[0].message for p in cfg.api_keys)  # one line for all, not one per provider
+    some = {"openai": {"model": "m", "status": "ok", "date": str(TODAY)}}
+    g = [x for x in find(run(cfg, catalog, None, some), "verify") if x.level == "info"][0]
+    assert "openai" not in g.message.split("yet:")[1] and g.fix != "modelspend verify --cache" and "google" in g.fix and "openai" not in g.fix
 
 
 @pytest.mark.parametrize("status,level", [("fail", "problem"), ("skip", "warn"), ("warn", "warn"), ("ok", "ok")])
@@ -260,3 +267,37 @@ def test_doctor_touches_no_network_and_writes_nothing(tmp_path, monkeypatch):
     r = runner.invoke(app, ["doctor"])
     assert "Traceback" not in r.output and "keys for openai (environment)" in r.output
     assert sorted(p.name for p in tmp_path.iterdir()) == before  # no database, no results file created by looking
+
+
+# ---------------------------------------------------------------- what a real setup showed (2026-10-24)
+def two_providers(tmp_path, enabled):
+    cat = Catalog.load(overrides={"add_models": [dict(_m("openai", "gpt-x", 2.0, 8.0), tier=1), dict(_m("google", "gem-x", 1.0, 4.0), tier=1)]})
+    cfg = Config(home=tmp_path, api_keys={"openai": "k", "google": "k"}, key_sources={"openai": "environment", "google": "keys file"}, default_providers=enabled)
+    return cfg, cat
+
+
+def test_a_provider_you_chose_not_to_enable_is_a_note_with_the_enable_command_not_a_problem(tmp_path):
+    cfg, cat = two_providers(tmp_path, ["openai"])
+    fs = run(cfg, cat)
+    f = [x for x in find(fs, "models") if x.message.startswith("google")]
+    assert [x.level for x in f] == ["info"] and f[0].fix == "modelspend providers enable google"
+    assert summary(fs)["problem"] == 0 and find(fs, "models", "ok")
+
+
+def test_one_unusable_provider_among_working_ones_is_a_warning_not_a_problem(tmp_path):
+    cfg, cat = two_providers(tmp_path, [])
+    cfg.api_keys["xai"] = "k"
+    cfg.key_sources["xai"] = "keys file"
+    fs = run(cfg, cat)
+    assert [x.level for x in find(fs, "models") if x.message.startswith("xai")] == ["warn"] and summary(fs)["problem"] == 0
+
+
+def test_calls_from_before_a_model_was_priced_are_a_note_and_calls_to_a_still_unpriced_model_a_warning(cfg):
+    s = Store(":memory:")
+    add_request(s, 20, provider="deepseek", model="deepseek-flash", cost=None)
+    priced = Catalog.load(overrides={"add_models": [dict(_m("deepseek", "deepseek-flash", 0.3, 1.2), tier=1)]})
+    fs = run(cfg, priced, s)
+    assert not [x for x in find(fs, "ledger", "warn") if "no price" in x.message]
+    n = [x for x in find(fs, "ledger", "info") if "deepseek/deepseek-flash x20" in x.message]
+    assert n and n[0].fix is None and "new calls are costed" in n[0].message
+    assert [x for x in run(cfg, Catalog.load(), s)  if x.level == "warn" and "no price" in x.message]

@@ -89,12 +89,15 @@ def _models(cfg: Config, catalog: Any, have: list[str], routability: Callable[[A
     for p in have:
         ms = [m for m in catalog.models if m.provider == p]
         if not ms:
-            out.append(Finding("problem", "models", f"{p}: your catalog has no {p} models", f"modelspend catalog sync --provider {p} --add-new --only {ONLY_HINT.get(p, p)} --write   # --only picks which model ids to add: narrow it for fewer"))
+            out.append(Finding("warn", "models", f"{p}: you have a key but your catalog has no {p} models, so nothing can be sent to it", f"modelspend catalog sync --provider {p} --add-new --only {ONLY_HINT.get(p, p)} --write   # --only picks which model ids to add: narrow it for fewer"))
             continue
         ok = [m for m in ms if not routability(m)]
         routable_all += ok
         if ok:
             out.append(Finding("ok", "models", f"{p}: {len(ok)} of {len(ms)} models routable"))
+            continue
+        if all("provider not enabled" in routability(m) for m in ms):  # your own allowlist, not a fault: say how to change it
+            out.append(Finding("info", "models", f"{p} has a key but is not in your enabled providers, so its {len(ms)} models are not used", f"modelspend providers enable {p}"))
             continue
         reasons: dict[str, int] = {}
         for m in ms:
@@ -104,7 +107,10 @@ def _models(cfg: Config, catalog: Any, have: list[str], routability: Callable[[A
         top = max(reasons, key=lambda k: reasons[k])
         fix = {"availability unverified": f"modelspend catalog sync --provider {p} --write", "no pricing": "modelspend sources list   # shows the provider's pricing page; enter prices with `modelspend catalog price`",
                "limits unknown": f"modelspend catalog sync --provider {p} --write", "no tier": "modelspend models list   # see which models have a tier"}.get(top)
-        out.append(Finding("problem", "models", f"{p}: none of its {len(ms)} models can be used right now; most common reason: {top} ({reasons[top]} models)", fix))
+        out.append(Finding("warn", "models", f"{p}: none of its {len(ms)} models can be used right now; most common reason: {top} ({reasons[top]} models)", fix))
+    if not routable_all:
+        first = next((f for f in out if f.area == "models" and f.level in ("warn", "info") and f.fix), None)
+        out.append(Finding("problem", "models", "no provider has a model ModelSpend can use right now, so every request would be refused", first.fix if first else None))
     for p in cfg.default_providers:
         if p not in cfg.api_keys:
             out.append(Finding("warn", "models", f"{p} is in your enabled-providers list but has no key", f"modelspend keys set {p}"))
@@ -132,10 +138,13 @@ def _prices(cfg: Config, catalog: Any, routable: list[Any], store: Any, out: lis
 
 
 def _verify(have: list[str], results: dict[str, dict[str, Any]], today: date, out: list[Finding]) -> None:
+    never = [p for p in have if p not in results]
+    if never:
+        out.append(Finding("info", "verify", "not checked live on this machine yet: " + ", ".join(never) + " (a few tiny requests each, a fraction of a cent; it asks before spending)",
+                           "modelspend verify --cache" if len(never) == len(have) else "modelspend verify " + " ".join(never) + " --cache"))
     for p in have:
         r = results.get(p)
         if r is None:
-            out.append(Finding("info", "verify", f"{p} has not been checked live on this machine yet (a few tiny requests, a fraction of a cent)", f"modelspend verify {p} --cache"))
             continue
         try:
             age = (today - date.fromisoformat(r.get("date", ""))).days
@@ -152,7 +161,7 @@ def _verify(have: list[str], results: dict[str, dict[str, Any]], today: date, ou
             out.append(Finding("ok", "verify", f"{what} passed"))
 
 
-def _ledger(store: Any, out: list[Finding]) -> None:
+def _ledger(store: Any, catalog: Any, out: list[Finding]) -> None:
     if store is None:
         return
     since = time.time() - LEDGER_DAYS * 86400
@@ -170,9 +179,14 @@ def _ledger(store: Any, out: list[Finding]) -> None:
     else:
         out.append(Finding("ok", "ledger", f"{n} request(s) in the last {LEDGER_DAYS} days, {failed} without an answer"))
     unpriced = store.db.execute(f"select provider, model, count(*) c from requests where ts >= ? and actual_cost is null and status in ({marks}) group by 1, 2", (since, *COUNTED)).fetchall()
-    if unpriced:
-        out.append(Finding("warn", "ledger", "calls with no price, so their cost is unknown: " + ", ".join(f"{r['provider']}/{r['model']} x{r['c']}" for r in unpriced[:4]),
-                           f"modelspend catalog price {unpriced[0]['provider']}/{unpriced[0]['model']} --input <usd per million> --output <usd per million>   # the numbers on the provider's pricing page (modelspend sources list shows the link)"))
+    priced = {m.ref for m in catalog.models if m.pricing and m.pricing.known}
+    still = [r for r in unpriced if f"{r['provider']}/{r['model']}" not in priced]
+    past = [r for r in unpriced if f"{r['provider']}/{r['model']}" in priced]
+    if still:
+        out.append(Finding("warn", "ledger", "calls with no price, so their cost is unknown: " + ", ".join(f"{r['provider']}/{r['model']} x{r['c']}" for r in still[:4]),
+                           f"modelspend catalog price {still[0]['provider']}/{still[0]['model']} --input <usd per million> --output <usd per million>   # the numbers on the provider's pricing page (modelspend sources list shows the link)"))
+    if past:
+        out.append(Finding("info", "ledger", "earlier calls with no cost recorded, from before the model was priced (new calls are costed): " + ", ".join(f"{r['provider']}/{r['model']} x{r['c']}" for r in past[:4])))
 
 
 def _caching(cfg: Config, have: list[str], store: Any, out: list[Finding]) -> None:
@@ -204,7 +218,7 @@ def diagnose(cfg: Config, catalog: Any, store: Any, *, routability: Callable[[An
     routable = _models(cfg, catalog, have, routability, out) if have else []
     _prices(cfg, catalog, routable, store, out)
     _verify(have, verify_results or {}, today or date.today(), out)
-    _ledger(store, out)
+    _ledger(store, catalog, out)
     _caching(cfg, have, store, out)
     _security_and_setup(cfg, out)
     return out
