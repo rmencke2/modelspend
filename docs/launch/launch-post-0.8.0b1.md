@@ -1,6 +1,6 @@
 # Launch post: ModelSpend 0.8.0b1
 
-Numbers below come from the maintainer's own runs on 20 Oct 2026 (the what-if table over 92 test calls; `modelspend verify --cache` on OpenAI, DeepSeek and Gemini; an OpenRouter dry run) and 21 to 23 Oct 2026 (`examples/caching_live_check.py` on OpenAI and DeepSeek). The bug list comes from the 0.8.0b3 release notes. Written for the 0.8 line: the install command takes the newest code. Re-run `modelspend whatif --since 30d` and check them before posting. Image: `launch-card-1200.png` (source `launch-card.html`).
+Numbers below come from the maintainer's own runs on 20 Oct 2026 (the what-if table over 92 test calls; `modelspend verify --cache` on OpenAI, DeepSeek and Gemini; an OpenRouter dry run) and 21 to 23 Oct 2026 (`examples/caching_live_check.py` on OpenAI and DeepSeek). The bug list comes from the 0.8.0b4 release notes. Written for the 0.8 line: the install command takes the newest code. Re-run `modelspend whatif --since 30d` and check them before posting. Image: `launch-card-1200.png` (source `launch-card.html`).
 
 ## LinkedIn
 
