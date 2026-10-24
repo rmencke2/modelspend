@@ -62,7 +62,7 @@ def _movers(cur: dict[str, dict[str, Any]], prev: dict[str, dict[str, Any]], ski
     return sorted(out, key=lambda m: (-abs(m["delta"]), m["name"]))[:MOVERS]
 
 
-def build_digest(store: Store, *, period: str = "day", now: float | None = None) -> dict[str, Any]:
+def build_digest(store: Store, *, period: str = "day", now: float | None = None, catalog: Any = None) -> dict[str, Any]:
     if period not in PERIODS:
         raise DigestError(f"period must be one of {', '.join(PERIODS)}")
     span, label = PERIODS[period]
@@ -86,7 +86,15 @@ def build_digest(store: Store, *, period: str = "day", now: float | None = None)
     elif pcost == 0 and cost >= SPIKE_MIN_USD:
         flags.append(f"no spend in the previous {label}, then ${cost:,.2f}")
     if tot["unpriced_attempts"]:
-        flags.append(f"{tot['unpriced_attempts']} call(s) used a model with no price, so the total is partial (price it with `modelspend catalog price`)")
+        rows = store.db.execute("select a.provider || '/' || a.model m, count(*) c from attempts a join requests r on r.id = a.request_id where r.ts >= ? and r.ts < ? and a.cost is null "
+                                "and a.outcome != 'skipped_budget' group by 1", (lo, now + 1)).fetchall()
+        priced = {m.ref for m in catalog.models if m.pricing and m.pricing.known} if catalog is not None else set()
+        early = sum(r["c"] for r in rows if r["m"] in priced)  # recorded before the model was priced: the price is set now, the old calls stay unknown
+        still = tot["unpriced_attempts"] - early
+        if still:
+            flags.append(f"{still} call(s) used a model with no price, so the total is partial (price it with `modelspend catalog price`)")
+        if early:
+            flags.append(f"{early} earlier call(s) ran before their model was priced, so the total is a little low (new calls are costed)")
     if n_req >= 10 and failed / n_req > ERROR_RATE_WARN:
         flags.append(f"{failed} of {n_req} requests did not produce an answer")
     if tot["overhead_token_share"] > OVERHEAD_WARN and tot["total_tokens"]:

@@ -1610,7 +1610,8 @@ def digest(period: str = typer.Option("day", "--period", help="day (the last 24 
         typer.echo('no webhook configured: add {"digest": {"webhook": "https://...", "format": "slack"}} to settings.json, or set MODELSPEND_DIGEST_WEBHOOK (see docs/digest.md)', err=True)
         raise typer.Exit(2)
     try:
-        d = build_digest(_store(), period=period)
+        from .catalog import Catalog
+        d = build_digest(_store(), period=period, catalog=Catalog.from_config(cfg))
     except DigestError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)

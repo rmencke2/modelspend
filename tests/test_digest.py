@@ -312,3 +312,17 @@ def test_the_json_format_carries_no_project_names_either_unless_asked(tmp_path, 
     assert sent[0]["digest"]["projects"] == [] and "secret-client-x" not in json.dumps(sent[0])
     runner.invoke(app, ["digest", "--post", "--include-projects"])
     assert [p["name"] for p in sent[1]["digest"]["projects"]] == ["secret-client-x"]
+
+
+def test_calls_from_before_a_model_was_priced_do_not_say_to_price_it_again(store):
+    from modelspend.catalog import Catalog
+    from test_whatif import _m
+    call(store, 2, 1.0)
+    call(store, 3, None, model="early")
+    call(store, 4, None, model="never")
+    cat = Catalog.load(overrides={"add_models": [dict(_m("openai", "early", 1.0, 2.0), tier=1)]})
+    d = build_digest(store, now=NOW, catalog=cat)
+    assert any("1 call(s) used a model with no price" in f and "catalog price" in f for f in d["flags"])
+    assert any("1 earlier call(s) ran before their model was priced" in f and "new calls are costed" in f for f in d["flags"])
+    d2 = build_digest(store, now=NOW, catalog=Catalog.load(overrides={"add_models": [dict(_m("openai", "early", 1.0, 2.0), tier=1), dict(_m("openai", "never", 1.0, 2.0), tier=1)]}))
+    assert not any("catalog price" in f for f in d2["flags"]) and sum("earlier call(s)" in f for f in d2["flags"]) == 1 and "2 earlier call(s)" in "".join(d2["flags"])
