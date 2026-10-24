@@ -25,6 +25,7 @@ from .errors import (
 )
 from .policy import POLICY_VERSION
 from .cachemarkers import choose as choose_cache_prefix
+from .duplicates import track as track_duplicate
 from .prefixes import track as track_prefix
 from .pricing import cost_for, estimate_cost
 from .providers.base import ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, StreamEnd
@@ -452,6 +453,7 @@ class Engine:
         if self.store:
             self.store.record(result)
             track_prefix(self.store, self.cfg.track_prefixes, req, cand.provider, cand.model, result.request_id)
+            track_duplicate(self.store, self.cfg.track_duplicates, req, result.request_id)
         if self.shadow is not None:
             self.shadow.maybe(req, plan, cand, resp, report, status)
         return result
@@ -627,4 +629,5 @@ class Engine:
         if self.store:
             self.store.record(result)
             track_prefix(self.store, self.cfg.track_prefixes, req, cur.provider, cur.model, result.request_id)
+            track_duplicate(self.store, self.cfg.track_duplicates, req, result.request_id)
         yield StreamEvent(type="done", result=result)

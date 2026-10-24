@@ -1597,6 +1597,29 @@ def status(catalog: Optional[str] = CAT):
 
 
 @app.command()
+def duplicates(since: str = typer.Option("30d", help="Window: 7d, 24h, 2w, a date like 2026-10-01, or 'all'."),
+               project: Optional[str] = typer.Option(None, help="Only this project's traffic."),
+               forget: bool = typer.Option(False, "--forget", help="Erase every stored request hash and exit."),
+               fmt: str = typer.Option("table", "--format", help="table or json.")):
+    """Requests sent more than once, word for word, and what the repeats cost (the text is never stored, only a keyed hash)."""
+    from .duplicates import build_duplicates, to_table
+    from .report import parse_since
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format must be table or json")
+    store = _store()
+    if forget:
+        typer.echo(f"erased {store.forget_duplicates()} stored request hash(es)")
+        return
+    cfg = Config.from_env()
+    try:
+        rep = build_duplicates(store, since=parse_since(since), project=project)
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    typer.echo(json.dumps(rep, indent=2) if fmt == "json" else to_table(rep, cfg.track_duplicates))
+
+
+@app.command()
 def digest(period: str = typer.Option("day", "--period", help="day (the last 24 hours against the 24 before) or week (7 days against the 7 before)."),
            fmt: str = typer.Option("text", "--format", help="text or json."),
            post: bool = typer.Option(False, "--post", help="Also send it to the webhook you configured (settings.json \"digest\", or MODELSPEND_DIGEST_WEBHOOK)."),

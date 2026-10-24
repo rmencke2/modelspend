@@ -248,6 +248,7 @@ class Config:
     exact_token_counts: bool = False
     classifier_model_enabled: bool = False
     anthropic_cache_markers: str = "off"  # "off" | "repeats" | "always": send Anthropic cache_control markers (see cachemarkers.py)
+    track_duplicates: bool = True  # keep a keyed hash of each whole request of 200+ characters (never its text) for `modelspend duplicates`
     digest_webhook: str | None = field(default=None, repr=False)  # where `modelspend digest --post` sends the digest (usually holds a secret: never printed)
     digest_format: str = "slack"  # slack | discord | json
     track_prefixes: bool = True  # keep a keyed hash and token count of long repeated prompt prefixes (never their text) for `modelspend caching`
@@ -326,6 +327,7 @@ class Config:
             exact_token_counts=_bool(e.get("MODELSPEND_EXACT_TOKEN_COUNTS")),
             classifier_model_enabled=_bool(e.get("MODELSPEND_CLASSIFIER_MODEL")),
             track_prefixes=_bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True)),
+            track_duplicates=_bool(e.get("MODELSPEND_TRACK_DUPLICATES"), _settings_bool(settings, "track_duplicates", True)),
             digest_webhook=_digest(settings, e)[0], digest_format=_digest(settings, e)[1],
             anthropic_cache_markers=_cache_markers(e.get("MODELSPEND_ANTHROPIC_CACHE_MARKERS"), settings.get("anthropic_cache_markers"),
                                                    _bool(e.get("MODELSPEND_TRACK_PREFIXES"), _settings_bool(settings, "track_prefixes", True))),

@@ -43,6 +43,8 @@ create index if not exists shadow_cat on shadow_results(category, cand_provider,
 create table if not exists prefix_stats(
   request_id text, ts real, provider text, model text, level text, h text, tokens int, hn text);
 create index if not exists prefix_seen on prefix_stats(provider, model, h, ts);
+create table if not exists dup_stats(request_id text, ts real, h text);
+create index if not exists dup_seen on dup_stats(h, ts);
 create table if not exists budget_holds(hold_id text primary key, project text, agent text, usd real, tokens integer, ts real);
 """
 
@@ -185,6 +187,7 @@ class Store:
                 self.db.execute("delete from requests where ts < ?", (older_than_ts,))
                 self.db.execute("delete from shadow_results where ts < ?", (older_than_ts,))
                 self.db.execute("delete from prefix_stats where ts < ?", (older_than_ts,))
+                self.db.execute("delete from dup_stats where ts < ?", (older_than_ts,))
                 self.db.commit()
         return {"requests": n, "attempts": a, "shadow": sh}
 
@@ -197,6 +200,19 @@ class Store:
             self.db.executemany("insert into prefix_stats(request_id, ts, provider, model, level, h, tokens, hn) values (?,?,?,?,?,?,?,?)",
                                 [(request_id, now, provider, model, lv["level"], lv["h"], lv["tokens"], lv.get("hn")) for lv in levels])
             self.db.commit()
+
+    def record_duplicate(self, request_id: str, h: str) -> None:
+        """A keyed hash of a whole request (never its text), so `modelspend duplicates` can find the ones sent twice."""
+        with self.lock:
+            self.db.execute("insert into dup_stats(request_id, ts, h) values (?,?,?)", (request_id, time.time(), h))
+            self.db.commit()
+
+    def forget_duplicates(self) -> int:
+        with self.lock:
+            n = self.db.execute("select count(*) from dup_stats").fetchone()[0]
+            self.db.execute("delete from dup_stats")
+            self.db.commit()
+        return n
 
     def forget_prefixes(self) -> int:
         with self.lock:

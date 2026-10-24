@@ -191,6 +191,7 @@ It compares tokens and cost per model over the days the export covers and flags 
 modelspend shadow on          # opt in, capped, off by default
 modelspend whatif --from-export usage.csv --export-provider openai   # same table from a provider usage export, before you have any traffic here
 modelspend digest             # last day vs the day before: spend, biggest movers, budgets near their limit, anything odd; --post sends it to your Slack/Discord webhook (docs/digest.md)
+modelspend duplicates         # requests sent more than once, word for word, and what the repeats cost (hashes only, never prompt text; docs/duplicates.md)
 modelspend caching            # which long prompt starts repeat, whether your provider is caching them, and what the misses cost (hashes only, never prompt text); for Claude, `"anthropic_cache_markers": "repeats"` in settings.json makes ModelSpend send the cache markers
 modelspend verify             # live check of a provider on your own key (usage, streaming, errors, cached tokens): a fraction of a cent
 modelspend share              # one static, shareable report (HTML or --format md): numbers only, no prompts, keys or project names
