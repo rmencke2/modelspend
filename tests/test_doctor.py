@@ -147,7 +147,7 @@ def test_verify_results_are_remembered_per_provider_without_keys_or_text(tmp_pat
                ProviderReport("google", None, [Check("key", "ok", "x")])]
     save_verify(tmp_path, reports, TODAY)
     d = load_verify(tmp_path)
-    assert d["openai"] == {"model": "openai/gpt-x", "status": "fail", "date": "2026-10-24", "problems": ["cache"], "skipped": []}
+    assert d["openai"] == {"model": "openai/gpt-x", "status": "fail", "date": "2026-10-24", "problems": ["cache"], "skipped": [], "refused": []}
     assert "sk-abc" not in (tmp_path / "verify-results.json").read_text() and d["google"]["status"] == "skip"
     save_verify(tmp_path, [ProviderReport("openai", "openai/gpt-x", [Check("generate", "ok", "")])], TODAY)
     assert load_verify(tmp_path)["openai"]["status"] == "ok" and "google" in load_verify(tmp_path)  # one provider's rerun leaves the others
@@ -301,3 +301,30 @@ def test_calls_from_before_a_model_was_priced_are_a_note_and_calls_to_a_still_un
     n = [x for x in find(fs, "ledger", "info") if "deepseek/deepseek-flash x20" in x.message]
     assert n and n[0].fix is None and "new calls are costed" in n[0].message
     assert [x for x in run(cfg, Catalog.load(), s)  if x.level == "warn" and "no price" in x.message]
+
+
+# ---------------------------------------------------------------- a model the provider refused (OpenAI retired gpt-4.1-nano, 2026-10)
+def refused_result(*refs):
+    return {"openai": {"model": "openai/gpt-5-mini", "status": "ok", "date": str(TODAY), "refused": list(refs)}}
+
+
+def test_a_model_refused_during_verify_but_still_listed_as_available_is_a_warning_with_the_disable_command(cfg):
+    cat = Catalog.load(overrides={"add_models": [dict(_m("openai", "gpt-gone", 0.1, 0.4), tier=1)]})
+    f = [x for x in find(run(cfg, cat, None, refused_result("openai/gpt-gone")), "models", "warn") if "gpt-gone" in x.message]
+    assert f and "refused" in f[0].message and f[0].fix == "modelspend models disable openai/gpt-gone"
+
+
+def test_a_refused_model_you_already_turned_off_or_that_is_not_in_the_catalog_is_not_reported_again(cfg):
+    cat = Catalog.load(overrides={"add_models": [dict(_m("openai", "gpt-gone", 0.1, 0.4), tier=1)]})
+    cfg.deny_models = ["openai/gpt-gone"]
+    assert not [x for x in run(cfg, cat, None, refused_result("openai/gpt-gone")) if "gpt-gone" in x.message]
+    cfg.deny_models = []
+    assert not [x for x in run(cfg, cat, None, refused_result("openai/never-listed")) if "never-listed" in x.message]
+
+
+def test_verify_remembers_which_model_was_refused_and_a_later_clean_run_clears_it(tmp_path):
+    refused = ProviderReport("openai", "openai/gpt-5-mini", [Check("model", "skip", "openai/gpt-4.1-nano was refused by this key (HTTP 404: deprecated); trying openai/gpt-5-mini"), Check("generate", "ok", "")])
+    save_verify(tmp_path, [refused], TODAY)
+    assert load_verify(tmp_path)["openai"]["refused"] == ["openai/gpt-4.1-nano"]
+    save_verify(tmp_path, [ProviderReport("openai", "openai/gpt-5-mini", [Check("generate", "ok", "")])], TODAY)
+    assert load_verify(tmp_path)["openai"]["refused"] == []

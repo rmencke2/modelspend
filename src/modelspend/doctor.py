@@ -50,7 +50,8 @@ def save_verify(home: Path, reports: list[Any], today: date | None = None) -> No
         for r in reports:
             data[r.provider] = {"model": r.model, "status": r.status, "date": str(today or date.today()),
                                 "problems": [c.name for c in r.checks if c.status in ("fail", "warn")],
-                                "skipped": [c.name for c in r.checks if c.status == "skip"]}
+                                "skipped": [c.name for c in r.checks if c.status == "skip"],
+                                "refused": [c.detail.split(" was refused by this key")[0] for c in r.checks if c.name == "model" and c.status == "skip" and " was refused by this key" in c.detail]}
         p.write_text(json.dumps(data, indent=2, sort_keys=True))
     except Exception:  # noqa: BLE001
         pass
@@ -161,6 +162,17 @@ def _verify(have: list[str], results: dict[str, dict[str, Any]], today: date, ou
             out.append(Finding("ok", "verify", f"{what} passed"))
 
 
+def _refused(catalog: Any, results: dict[str, dict[str, Any]], routability: Callable[[Any], list[str]], out: list[Finding]) -> None:
+    """A provider's model list keeps showing a retired model (OpenAI's still listed gpt-4.1-nano after answering 404 'deprecated'), so the only evidence is a refusal during `verify`."""
+    by_ref = {m.ref: m for m in catalog.models}
+    for p, r in sorted(results.items()):
+        for ref in r.get("refused") or []:
+            m = by_ref.get(ref)
+            if m is not None and "turned off by you" not in routability(m):
+                out.append(Finding("warn", "models", f"{ref}: your key was refused this model in the last live check ({r.get('date', '?')}; retired, or not open to your account), but your catalog still lists it as available, so routing may try it first",
+                                   f"modelspend models disable {ref}"))
+
+
 def _ledger(store: Any, catalog: Any, out: list[Finding]) -> None:
     if store is None:
         return
@@ -218,6 +230,7 @@ def diagnose(cfg: Config, catalog: Any, store: Any, *, routability: Callable[[An
     routable = _models(cfg, catalog, have, routability, out) if have else []
     _prices(cfg, catalog, routable, store, out)
     _verify(have, verify_results or {}, today or date.today(), out)
+    _refused(catalog, verify_results or {}, routability, out)
     _ledger(store, catalog, out)
     _caching(cfg, have, store, out)
     _security_and_setup(cfg, out)
