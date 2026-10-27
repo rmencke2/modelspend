@@ -437,3 +437,23 @@ def test_a_token_estimate_above_what_the_provider_counted_is_capped(catalog=None
     r = advise(s)["rows"][0]
     assert r["prefix_tokens"] == 5115 and r["repeat_tokens"] == 11 * 5115 and r["missed_tokens"] == 11 * 5115 - 11 * 4992
     assert r["advice"].startswith("caching is working")  # 2% missed, not the 24% the estimate alone would show
+
+
+def test_the_live_check_script_explains_a_retired_model_instead_of_a_traceback(monkeypatch, cfg, capsys):
+    import importlib.util
+    import pathlib
+    from modelspend import ModelSpend
+    from modelspend.errors import ProviderError
+    from modelspend.providers.mock import ScriptedAdapter
+
+    spec = importlib.util.spec_from_file_location("caching_live_check", pathlib.Path(__file__).parent.parent / "examples" / "caching_live_check.py")
+    ex = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ex)
+    cfg.track_prefixes = True
+    gone = ScriptedAdapter("openai", lambda r, n: ProviderError("openai", "bad_request", "The model `gpt-4.1-nano` has been deprecated"))
+    ms = ModelSpend(providers=["openai"], config=cfg, catalog=Catalog.load(overrides={"add_models": [_m("openai", "gpt-4.1-nano", 0.1, 0.4, cached=0.025)]}),
+                    adapters={"openai": gone}, store=Store(":memory:"))
+    assert ex.main([], ms) == 1
+    out = capsys.readouterr().out
+    assert "openai/gpt-4.1-nano did not answer" in out and "deprecated" in out and "modelspend verify openai --yes" in out and "modelspend models disable openai/gpt-4.1-nano" in out
+    assert "Traceback" not in out

@@ -22,6 +22,7 @@ import time
 from modelspend import ModelSpend
 from modelspend.cacheadvice import build_cache_advice, to_table
 from modelspend.config import Config
+from modelspend.errors import AllAttemptsFailed
 
 PIN = "openai/gpt-4.1-nano"
 PROJECT = "caching-live-check"
@@ -54,14 +55,28 @@ def run(ms: ModelSpend, *, pin: str = PIN, pause_s: float = 2.0, a: int = 12, b:
     return out
 
 
-if __name__ == "__main__":
-    pin = sys.argv[1] if len(sys.argv) > 1 else PIN
-    pause = float(sys.argv[2]) if len(sys.argv) > 2 else 2.0
-    cfg = Config.from_env()
-    if pin.startswith("anthropic/") and cfg.anthropic_cache_markers == "off":  # Claude caches only what a request marks
-        cfg = dataclasses.replace(cfg, anthropic_cache_markers="repeats")
-        print('note: "anthropic_cache_markers" is off in your settings; it is on ("repeats") for this run only\n')
-    ms = ModelSpend(providers=[pin.split("/")[0]], config=cfg)
+def main(argv: list[str], ms: ModelSpend | None = None) -> int:
+    pin = argv[0] if argv else PIN
+    pause = float(argv[1]) if len(argv) > 1 else 2.0
+    if ms is None:
+        cfg = Config.from_env()
+        if pin.startswith("anthropic/") and cfg.anthropic_cache_markers == "off":  # Claude caches only what a request marks
+            cfg = dataclasses.replace(cfg, anthropic_cache_markers="repeats")
+            print('note: "anthropic_cache_markers" is off in your settings; it is on ("repeats") for this run only\n')
+        ms = ModelSpend(providers=[pin.split("/")[0]], config=cfg)
     if not ms.config.track_prefixes:  # (also required by the Claude markers)
-        raise SystemExit("Prefix tracking is off. Remove track_prefixes from settings.json (or set MODELSPEND_TRACK_PREFIXES=1) and run again.")
-    run(ms, pin=pin, pause_s=pause)
+        print("Prefix tracking is off. Remove track_prefixes from settings.json (or set MODELSPEND_TRACK_PREFIXES=1) and run again.")
+        return 1
+    try:
+        run(ms, pin=pin, pause_s=pause)
+    except AllAttemptsFailed as e:  # most often a model the provider has since retired: say what to do instead of a traceback
+        prov = pin.split("/")[0]
+        print(f"\n{pin} did not answer: {str(e)[:300]}\n\nIf the provider has retired that model, use another one: `python examples/caching_live_check.py <provider/model>`.\n"
+              f"`modelspend verify {prov} --yes` finds a model your key can still use; `modelspend catalog sync --provider {prov}` (a dry run) shows what your key lists now;\n"
+              f"`modelspend models disable {pin}` keeps ModelSpend from routing to it.")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
