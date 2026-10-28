@@ -4,7 +4,7 @@
 
 ModelSpend is a small open-source tool (Apache-2.0) that sits between your code and the LLM providers you already use (OpenAI, Anthropic, Google, xAI, DeepSeek and anything OpenAI-compatible, with **your own keys**). It shows where your tokens and money go per project and agent, enforces budgets *before* the spend, and can route each task to the lowest-cost model expected to do the job. It runs locally, stores no prompts, and is built for **one developer or a small team (1 to 25 people)**.
 
-This release builds on [0.8.0b3](RELEASE_NOTES_0.8.0b3.md), which fixed the bugs that real accounts found in `verify`, the caching advisor and price refresh. Everything in those notes still applies.
+This release builds on [0.8.0b3](https://github.com/rmencke2/modelspend/blob/main/RELEASE_NOTES_0.8.0b3.md), which fixed the bugs that real accounts found in `verify`, the caching advisor and price refresh. Everything in those notes still applies.
 
 ## Try it
 
@@ -57,7 +57,7 @@ in `~/.modelspend/settings.json` (or `MODELSPEND_ANTHROPIC_CACHE_MARKERS`). `rep
 - **A call routed through OpenRouter or Ollama.** **Automatic price refresh on a page whose table is readable as rows**: the only real page tried was DeepSeek's.
 - **Savings from `shadow`, `savings` and `whatif` remain projections.**
 - **One intermittent test failure** was seen once in about twelve full runs and has not been identified (eleven consecutive runs passed afterwards).
-- Everything listed as not yet verified in [0.8.0b3](RELEASE_NOTES_0.8.0b3.md) and [0.8.0b1](RELEASE_NOTES_0.8.0b1.md) that is not mentioned above still applies (the Docker sandbox, Windows, a cost comparison against a provider's invoice).
+- Everything listed as not yet verified in [0.8.0b3](https://github.com/rmencke2/modelspend/blob/main/RELEASE_NOTES_0.8.0b3.md) and [0.8.0b1](https://github.com/rmencke2/modelspend/blob/main/RELEASE_NOTES_0.8.0b1.md) that is not mentioned above still applies (the Docker sandbox, Windows, a cost comparison against a provider's invoice).
 
 ## Upgrade
 
