@@ -1,4 +1,4 @@
-# ModelSpend 0.8.0b4 (beta) — DRAFT: more is planned for this release; the version number in the code is bumped and these notes finalised when it is tagged
+# ModelSpend 0.8.0b4 (beta)
 
 **Claude now gets prompt caching (opt-in), and real accounts found real bugs in 0.8.0b1: in the checks and the caching advisor as much as in the providers. This release fixes them, and says exactly what has and has not been confirmed.**
 
@@ -11,8 +11,9 @@ ModelSpend is a small open-source tool (Apache-2.0) that sits between your code 
 ```bash
 git pull && pip install -e .
 modelspend keys set openai            # or deepseek, google, xai
+modelspend doctor                     # offline: what is wrong with your setup, and the command that fixes it
 modelspend verify openai --cache
-python examples/caching_live_check.py # a fixed prompt, then one that starts with the time (well under a cent)
+python examples/caching_live_check.py <provider/model>   # a fixed prompt, then one that starts with the time (well under a cent)
 ```
 
 `verify` asks first and prints the most it can cost (typically a fraction of a cent). Progress appears as each check finishes. If something fails, `--report check.md` writes a Markdown report (ids, counts and error kinds only) you can paste into an issue.
@@ -67,13 +68,14 @@ Each is marked *live* if it was seen on a real account. The others came from rea
 
 | What | Result |
 |---|---|
-| **OpenAI** `verify` | `gpt-4.1-nano`: every check passes, including cached tokens counted once (183 uncached + 1,152 cached = 1,335, the same total as the first call). `gpt-4.1`: usage, streaming and structured output. |
+| **OpenAI** `verify` | `gpt-4.1-nano` (OpenAI has since retired it): every check passes, including cached tokens counted once (183 uncached + 1,152 cached = 1,335, the same total as the first call). `gpt-4.1`: usage, streaming and structured output. |
 | **DeepSeek** `verify` | `deepseek-flash`: every check it ran passes, including cached tokens counted once (207 + 1,152 = 1,359). |
 | **Google Gemini** `verify` | `gemini-flash-lite-latest` (free tier): every check it ran passes, including cached tokens (3,255 + 2,035 = 5,290). A ~1,330-token prompt got no cache hit and a ~5,300-token one did. |
-| **Caching advisor, OpenAI** | `gpt-4.1-nano`, `examples/caching_live_check.py`: a prompt starting with the time got 0 of 8 calls cached and was named; a fixed ~5,000-token prompt was cached (4,992 tokens a call) and read "caching is working". |
+| **Caching advisor, OpenAI** | `gpt-4.1-nano` (before its retirement), `examples/caching_live_check.py`: a prompt starting with the time got 0 of 8 calls cached and was named; a fixed ~5,000-token prompt was cached (4,992 tokens a call) and read "caching is working". |
 | **OpenAI reasoning accounting** | `gpt-5-mini` (after `gpt-4.1-nano` was refused as retired): one word cost 74 completion tokens of which 64 were reasoning, reported inside the completion count as the catalog says, counted once. |
 | **Caching advisor, Anthropic** | `claude-haiku-5-5` with the cache markers on: one write, then reads of 7,489 tokens on every call; a time-first prompt never marked and named; $0.0066 saved, checked by hand. |
 | **Caching advisor, DeepSeek** | `deepseek-flash`: the same two results. With the peak prices set by hand ($0.30 uncached, $0.006 cached per million tokens) it showed $0.0176 saved and $0.0106 on the table, both matching the token counts recomputed by hand. |
+| **`doctor`, `digest`, `duplicates`** | Each run once on the maintainer's own setup (594 requests of test traffic); `duplicates` only on a script that repeats requests on purpose. See above for what each found. |
 | **Pricing refresh, DeepSeek** | Did not produce prices (JavaScript-drawn page, then a column table). It refused the wrong numbers it was offered, as designed. |
 | **xAI** | Not verified: the account had no credit, and ModelSpend now says so correctly. |
 

@@ -9,7 +9,7 @@ from .errors import (
 from .policy import POLICY_VERSION
 from .types import Plan, Profile, RouteRequest, RouteResult, TaskCategory
 
-__version__ = "0.8.0b3"
+__version__ = "0.8.0b4"
 __all__ = [
     "ModelSpend", "Catalog", "Config", "RouteRequest", "RouteResult", "Plan", "Profile", "TaskCategory", "POLICY_VERSION",
     "ModelSpendError", "NoEligibleModel", "BudgetTooLow", "AllAttemptsFailed", "StreamInterrupted",

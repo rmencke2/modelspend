@@ -78,7 +78,7 @@ class Store:
         for col, decl in (("project", "text"), ("agent", "text"), ("run_id", "text"), ("labels", "text"), ("pinned", "int default 0")):
             if col not in have:
                 self.db.execute(f"alter table requests add column {col} {decl}")
-        # 0.8.0b3: the shape hash that recognises a prefix drifting in numbers or ids (rows from 0.8.0b1/b2 simply have none)
+        # 0.8.0b4: the shape hash that recognises a prefix drifting in numbers or ids (rows from 0.8.0b1/b2 simply have none)
         if "hn" not in {r[1] for r in self.db.execute("pragma table_info(prefix_stats)")}:
             self.db.execute("alter table prefix_stats add column hn text")
         self.db.execute("create index if not exists requests_project_agent on requests(project, agent, ts)")

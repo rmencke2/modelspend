@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modelspend"
-version = "0.8.0b3"
+version = "0.8.0b4"
 description = "Open-source router that selects the lowest-cost AI model expected to suit each task, using your own API keys."
 readme = "README.md"
 requires-python = ">=3.10"
